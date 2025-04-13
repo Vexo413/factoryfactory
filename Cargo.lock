@@ -1953,7 +1953,6 @@ dependencies = [
  "flate2",
  "noise",
  "serde",
- "serde_json",
 ]
 
 [[package]]
