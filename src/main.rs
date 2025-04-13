@@ -380,8 +380,6 @@ fn tick_tiles(
     mut commands: Commands,
     mut world: ResMut<WorldRes>,
     asset_server: Res<AssetServer>,
-    query: Query<(&TileSprite, &Children)>,
-    mut child_query: Query<&mut Visibility>,
 ) {
     world.tick_timer.tick(time.delta());
     if world.tick_timer.finished() {
@@ -892,8 +890,6 @@ fn animate_items_system(
     time: Res<Time>,
     mut commands: Commands,
     mut query: Query<(Entity, &mut ItemAnimation, &mut Transform)>,
-    mut tile_query: Query<(&TileSprite, &Children)>,
-    mut child_query: Query<&mut Visibility>,
 ) {
     for (entity, mut animation, mut transform) in query.iter_mut() {
         animation.timer.tick(time.delta());
@@ -916,7 +912,6 @@ fn manage_tiles(
     mut world: ResMut<WorldRes>,
     asset_server: Res<AssetServer>,
     mut commands: Commands,
-    query: Query<(Entity, &TileSprite)>,
 ) {
     if keyboard_input.pressed(KeyCode::Digit1) {
         placer.tile_type = 1;
