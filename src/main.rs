@@ -35,7 +35,6 @@ enum FactoryType {
 #[derive(Debug, Clone)]
 enum Action {
     Move(Position, Position, Item),
-    MoveFactory(Position, Position, Item),
     Produce(Position),
     None,
 }
@@ -140,7 +139,7 @@ impl Tile for Conveyor {
                     return Action::Move(start_position, end_position, self.item);
                 }
                 if target_tile.0.as_any().is::<Factory>() {
-                    return Action::MoveFactory(start_position, end_position, self.item);
+                    return Action::Move(start_position, end_position, self.item);
                 }
             }
         }
@@ -403,32 +402,22 @@ fn tick_tiles(
                                     }
                                 }
                             }
-                        }
-                    }
-                }
-                Action::MoveFactory(start, end, item) => {
-                    if let Some(factory) = world
-                        .tiles
-                        .get_mut(&end)
-                        .unwrap()
-                        .0
-                        .as_any_mut()
-                        .downcast_mut::<Factory>()
-                    {
-                        dbg!(&factory);
-                        if factory.capacity.get(&item).unwrap_or(&0_u32)
-                            > factory.inventory.get(&item).unwrap_or(&0_u32)
+                        } else if let Some(factory) = tile.0.as_any_mut().downcast_mut::<Factory>()
                         {
-                            *factory.inventory.entry(item).or_insert(0) += 1;
-                            if let Some(start_conveyor) = world
-                                .tiles
-                                .get_mut(&start)
-                                .unwrap()
-                                .0
-                                .as_any_mut()
-                                .downcast_mut::<Conveyor>()
+                            if factory.capacity.get(&item).unwrap_or(&0_u32)
+                                > factory.inventory.get(&item).unwrap_or(&0_u32)
                             {
-                                start_conveyor.item = Item::None;
+                                *factory.inventory.entry(item).or_insert(0) += 1;
+                                if let Some(start_conveyor) = world
+                                    .tiles
+                                    .get_mut(&start)
+                                    .unwrap()
+                                    .0
+                                    .as_any_mut()
+                                    .downcast_mut::<Conveyor>()
+                                {
+                                    start_conveyor.item = Item::None;
+                                }
                             }
                         }
                     }
@@ -541,48 +530,41 @@ fn tick_tiles(
                                     },
                                 ));
                             }
-                        }
-                    }
-                }
-                Action::MoveFactory(start, end, item) => {
-                    if let Some(factory) = world
-                        .tiles
-                        .get(&end)
-                        .unwrap()
-                        .0
-                        .as_any()
-                        .downcast_ref::<Factory>()
-                    {
-                        if factory.capacity.get(&item).unwrap_or(&0_u32)
-                            > factory.inventory.get(&item).unwrap_or(&0_u32)
-                        {
-                            moved.push(*start);
+                        } else if let Some(factory) = tile.0.as_any().downcast_ref::<Factory>() {
+                            if factory.capacity.get(&item).unwrap_or(&0_u32)
+                                > factory.inventory.get(&item).unwrap_or(&0_u32)
+                            {
+                                moved.push(*start);
 
-                            let start_pos = Vec3::new(
-                                start.x as f32 * TILE_SIZE,
-                                start.y as f32 * TILE_SIZE,
-                                1.0,
-                            );
-                            let end_pos =
-                                Vec3::new(end.x as f32 * TILE_SIZE, end.y as f32 * TILE_SIZE, 1.0);
-                            commands.spawn((
-                                ItemAnimation {
-                                    start_pos,
-                                    end_pos,
-                                    timer: Timer::from_seconds(TICK_LENGTH, TimerMode::Once),
-                                },
-                                Sprite::from_image(asset_server.load(match item {
-                                    Item::None => "textures/items/none.png",
-                                    Item::Wood => "textures/items/wood.png",
-                                    Item::Stone => "textures/items/stone.png",
-                                    Item::Product => "textures/items/product.png",
-                                })),
-                                Transform {
-                                    translation: start_pos,
-                                    scale: Vec3::splat(ITEM_SIZE / IMAGE_SIZE),
-                                    ..Default::default()
-                                },
-                            ));
+                                let start_pos = Vec3::new(
+                                    start.x as f32 * TILE_SIZE,
+                                    start.y as f32 * TILE_SIZE,
+                                    1.0,
+                                );
+                                let end_pos = Vec3::new(
+                                    end.x as f32 * TILE_SIZE,
+                                    end.y as f32 * TILE_SIZE,
+                                    1.0,
+                                );
+                                commands.spawn((
+                                    ItemAnimation {
+                                        start_pos,
+                                        end_pos,
+                                        timer: Timer::from_seconds(TICK_LENGTH, TimerMode::Once),
+                                    },
+                                    Sprite::from_image(asset_server.load(match item {
+                                        Item::None => "textures/items/none.png",
+                                        Item::Wood => "textures/items/wood.png",
+                                        Item::Stone => "textures/items/stone.png",
+                                        Item::Product => "textures/items/product.png",
+                                    })),
+                                    Transform {
+                                        translation: start_pos,
+                                        scale: Vec3::splat(ITEM_SIZE / IMAGE_SIZE),
+                                        ..Default::default()
+                                    },
+                                ));
+                            }
                         }
                     }
                 }
