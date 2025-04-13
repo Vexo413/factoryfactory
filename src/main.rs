@@ -930,10 +930,6 @@ fn manage_tiles(
             (Direction::Right, Some(std::cmp::Ordering::Greater)) => Direction::Up,
             (current, _) => current,
         };
-        info!(
-            "Updated conveyor placement direction: {:?}",
-            placer.direction
-        );
     }
 
     let window = windows.single();
@@ -956,6 +952,7 @@ fn manage_tiles(
         }
 
         let texture_path = match placer.tile_type {
+            0 => "textures/tiles/none.png",
             1 => "textures/tiles/belt.png",
             2 => "textures/tiles/assembler.png",
             3 => "textures/tiles/extractor.png",
@@ -1055,10 +1052,6 @@ fn manage_tiles(
                     }
                 }
             } else {
-                info!(
-                    "Placing conveyor at {:?} facing {:?}",
-                    pos, placer.direction
-                );
                 if placer.tiles.get(&placer.tile_type).unwrap_or(&0) >= &1 {
                     let tile_type = placer.tile_type;
                     *placer.tiles.entry(tile_type).or_insert(0) -= 1;
@@ -1134,6 +1127,7 @@ fn manage_tiles(
         }
     }
     if mouse_button_input.pressed(MouseButton::Right) {
+        placer.tile_type = 0;
         let window = windows.single();
         if let Some(screen_pos) = window.cursor_position() {
             let (camera, camera_transform) = camera_query.single();
