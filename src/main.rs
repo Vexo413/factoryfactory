@@ -8,7 +8,6 @@ use std::{
     any::Any,
     collections::{HashMap, HashSet},
     f32::consts::{FRAC_PI_2, PI},
-    ffi::OsStr,
     fmt::Debug,
     fs::File,
     io::{self, Read, Write},
@@ -21,7 +20,6 @@ const IMAGE_SIZE: f32 = 128.0;
 const TICK_LENGTH: f32 = 1.0;
 const CAMERA_SPEED: f32 = 5.0;
 
-// Serializable versions of our game objects
 #[derive(Serialize, Deserialize, Encode, Decode)]
 enum SerializableTile {
     Conveyor {
@@ -47,7 +45,6 @@ enum SerializableTile {
 
 #[derive(Serialize, Deserialize, Encode, Decode)]
 struct SerializableWorld {
-    // Use a u64 key instead of String for position
     tiles: HashMap<u64, (SerializableTile, u32)>,
     resources: HashMap<u32, u32>,
     world_seed: u32,
@@ -105,28 +102,11 @@ impl Position {
     fn new(x: i32, y: i32) -> Self {
         Self { x, y }
     }
-    fn to_string_key(&self) -> String {
-        format!("{},{}", self.x, self.y)
-    }
 
-    // Parse a string key back to Position
-    fn from_string_key(key: &str) -> Option<Self> {
-        let parts: Vec<&str> = key.split(',').collect();
-        if parts.len() != 2 {
-            return None;
-        }
-
-        let x = parts[0].parse::<i32>().ok()?;
-        let y = parts[1].parse::<i32>().ok()?;
-
-        Some(Position::new(x, y))
-    }
     fn to_key(&self) -> u64 {
-        // Use 32 bits for each coordinate (can handle ±2 billion)
         ((self.x as u64) & 0xFFFFFFFF) | (((self.y as u64) & 0xFFFFFFFF) << 32)
     }
 
-    // Extract x,y from the packed key
     fn from_key(key: u64) -> Self {
         let x = (key & 0xFFFFFFFF) as i32;
         let y = ((key >> 32) & 0xFFFFFFFF) as i32;
@@ -156,16 +136,14 @@ struct WorldRes {
     tiles: HashMap<Position, (Box<dyn Tile>, u32)>,
     terrain: HashMap<Position, TerrainTileType>,
     resources: HashMap<u32, u32>,
-    world_seed: u32, // Store the seed for terrain generation
+    world_seed: u32,
     tick_timer: Timer,
     tick_count: i32,
     actions: Vec<Action>,
 }
 
 impl WorldRes {
-    // Updated save function for binary serialization with bincode 2.0.1
     pub fn save(&self, path: impl AsRef<Path>) -> Result<(), io::Error> {
-        // Convert WorldRes to SerializableWorld with string keys
         let serializable_world = SerializableWorld {
             tiles: self
                 .tiles
@@ -209,14 +187,11 @@ impl WorldRes {
             tick_count: self.tick_count,
         };
 
-        // Configure bincode with default settings
         let config = config::standard().with_fixed_int_encoding().with_no_limit();
 
-        // Serialize with bincode
         let serialized = bincode::encode_to_vec(&serializable_world, config)
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
-        // Compress with flate2
         let file = File::create(path)?;
         let mut encoder = DeflateEncoder::new(file, Compression::best());
         encoder.write_all(&serialized)?;
@@ -225,24 +200,19 @@ impl WorldRes {
         Ok(())
     }
 
-    // Updated load function for binary serialization with bincode 2.0.1
     pub fn load(path: impl AsRef<Path>) -> io::Result<Self> {
-        // Read the entire file into a buffer
         let file = File::open(path)?;
 
         let mut decoder = DeflateDecoder::new(file);
         let mut buffer = Vec::new();
         decoder.read_to_end(&mut buffer)?;
 
-        // Configure bincode with default settings
         let config = config::standard().with_fixed_int_encoding().with_no_limit();
 
-        // Deserialize from binary
         let (serializable_world, _): (SerializableWorld, _) =
             bincode::decode_from_slice(&buffer, config)
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
-        // Convert SerializableWorld back to WorldRes
         let mut tiles = HashMap::new();
         let mut terrain = HashMap::new();
 
@@ -289,7 +259,6 @@ impl WorldRes {
             tiles.insert(pos, (boxed_tile, id));
         }
 
-        // Regenerate terrain based on the seed
         let perlin = Perlin::new(serializable_world.world_seed);
         let noise_scale = 0.1;
 
@@ -328,7 +297,7 @@ impl Default for WorldRes {
             tiles: HashMap::new(),
             terrain: HashMap::new(),
             resources,
-            world_seed: 59, // Default seed value
+            world_seed: 59,
             tick_timer: Timer::from_seconds(TICK_LENGTH, TimerMode::Repeating),
             tick_count: 0,
             actions: Vec::new(),
@@ -527,7 +496,6 @@ fn main() {
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut world: ResMut<WorldRes>) {
     commands.spawn(Camera2d::default());
 
-    // Only generate terrain if it's empty (new world)
     if world.terrain.is_empty() {
         let perlin = Perlin::new(world.world_seed);
         let noise_scale = 0.1;
@@ -545,7 +513,6 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut world: ResM
         }
     }
 
-    // Spawn terrain visuals
     for (pos, terrain) in world.terrain.iter() {
         let texture_path = match terrain {
             TerrainTileType::Grass => "textures/terrain/grass.png",
@@ -561,7 +528,6 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut world: ResM
         ));
     }
 
-    // Add default tiles if it's a new world
     if world.tiles.is_empty() {
         world.tiles.insert(
             Position::new(-3, -3),
@@ -591,7 +557,6 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut world: ResM
         );
     }
 
-    // Spawn tile visuals
     for (pos, _) in world.tiles.iter() {
         commands
             .spawn((
@@ -826,7 +791,7 @@ fn tick_tiles(
                                     if conveyor.item == Item::None || moved.contains(&end_position)
                                     {
                                         moved.push(*position);
-                                        // Spawn production animation
+
                                         let start_pos = Vec3::new(
                                             position.x as f32 * TILE_SIZE,
                                             position.y as f32 * TILE_SIZE,
@@ -992,7 +957,6 @@ fn update_tile_visuals(
     let mut existing_positions = HashSet::new();
     let mut animated_positions = HashSet::new();
 
-    // Collect positions that are currently animated
     for animation in item_animation_query.iter() {
         let start_pos = Position::new(
             (animation.start_pos.x / TILE_SIZE).round() as i32,
@@ -1034,7 +998,6 @@ fn update_tile_visuals(
                         if let Ok((mut child_sprite, mut child_transform)) =
                             child_sprite_query.get_mut(child)
                         {
-                            // Update visibility based on animation state
                             if animated_positions.contains(&tile_sprite.pos) {
                                 child_sprite.color = Color::NONE;
                             } else {
@@ -1248,18 +1211,14 @@ fn manage_tiles(
             let direction = placer.direction;
 
             if world.tiles.contains_key(&pos) {
-                // 1. Get current tile ID and check resources first
                 let current_tile_id = world.tiles.get(&pos).map(|(_, id)| *id).unwrap_or(0);
 
-                // 2. Check if we have enough resources
                 if *world.resources.get(&tile_type).unwrap_or(&0) >= 1
                     || placer.tile_type == current_tile_id
                 {
-                    // 3. Update resources first (avoid nested borrows)
                     *world.resources.entry(current_tile_id).or_insert(0) += 1;
                     *world.resources.entry(tile_type).or_insert(0) -= 1;
 
-                    // 4. Now create the new tile (in a separate scope to avoid multiple borrows)
                     let new_tile = match tile_type {
                         1 => (
                             Box::new(Conveyor {
@@ -1304,18 +1263,14 @@ fn manage_tiles(
                         ),
                     };
 
-                    // 5. Update the tile in the world
                     if let Some(entry) = world.tiles.get_mut(&pos) {
                         *entry = new_tile;
                     }
                 }
             } else {
-                // Creating a new tile
                 if *world.resources.get(&tile_type).unwrap_or(&0) >= 1 {
-                    // Update resources first
                     *world.resources.entry(tile_type).or_insert(0) -= 1;
 
-                    // Create the new tile
                     let new_tile = match tile_type {
                         1 => (
                             Box::new(Conveyor {
@@ -1360,10 +1315,8 @@ fn manage_tiles(
                         ),
                     };
 
-                    // Insert the tile
                     world.tiles.insert(pos, new_tile);
 
-                    // Create the visual representation
                     commands
                         .spawn((
                             Sprite::from_image(asset_server.load("textures/tiles/belt.png")),
