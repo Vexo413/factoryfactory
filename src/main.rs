@@ -1,10 +1,18 @@
 use bevy::{color::palettes::css, input::mouse::MouseWheel, prelude::*, window::PrimaryWindow};
+use bincode::{Decode, Encode, config};
+use flate2::{Compression, read::DeflateDecoder, write::DeflateEncoder};
 use noise::{NoiseFn, Perlin};
+use serde::{Deserialize, Serialize};
+
 use std::{
     any::Any,
     collections::{HashMap, HashSet},
     f32::consts::{FRAC_PI_2, PI},
+    ffi::OsStr,
     fmt::Debug,
+    fs::File,
+    io::{self, Read, Write},
+    path::Path,
 };
 
 const TILE_SIZE: f32 = 64.0;
@@ -13,13 +21,45 @@ const IMAGE_SIZE: f32 = 128.0;
 const TICK_LENGTH: f32 = 1.0;
 const CAMERA_SPEED: f32 = 5.0;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+// Serializable versions of our game objects
+#[derive(Serialize, Deserialize, Encode, Decode)]
+enum SerializableTile {
+    Conveyor {
+        position: Position,
+        direction: Direction,
+        item: Item,
+    },
+    Extractor {
+        position: Position,
+        direction: Direction,
+        spawn_item: Item,
+        interval: i32,
+        required_terrain: TerrainTileType,
+    },
+    Factory {
+        position: Position,
+        direction: Direction,
+        factory_type: FactoryType,
+        inventory: HashMap<Item, u32>,
+        capacity: HashMap<Item, u32>,
+    },
+}
+
+#[derive(Serialize, Deserialize, Encode, Decode)]
+struct SerializableWorld {
+    // Use a u64 key instead of String for position
+    tiles: HashMap<u64, (SerializableTile, u32)>,
+    resources: HashMap<u32, u32>,
+    world_seed: u32,
+    tick_count: i32,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Encode, Decode)]
 enum TerrainTileType {
     Grass,
     Dirt,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encode, Decode)]
 enum Direction {
     Up,
     Down,
@@ -27,7 +67,7 @@ enum Direction {
     Right,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encode, Decode)]
 enum FactoryType {
     Assembler,
 }
@@ -39,7 +79,7 @@ enum Action {
     None,
 }
 
-#[derive(PartialEq, Eq, Clone, Hash, Debug, Copy)]
+#[derive(PartialEq, Eq, Clone, Hash, Debug, Copy, Deserialize, Serialize, Encode, Decode)]
 enum Item {
     None,
     Wood,
@@ -53,7 +93,9 @@ struct Recipe {
     output: (Item, u32),
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+#[derive(
+    Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash, Serialize, Deserialize, Encode, Decode,
+)]
 struct Position {
     x: i32,
     y: i32,
@@ -63,6 +105,33 @@ impl Position {
     fn new(x: i32, y: i32) -> Self {
         Self { x, y }
     }
+    fn to_string_key(&self) -> String {
+        format!("{},{}", self.x, self.y)
+    }
+
+    // Parse a string key back to Position
+    fn from_string_key(key: &str) -> Option<Self> {
+        let parts: Vec<&str> = key.split(',').collect();
+        if parts.len() != 2 {
+            return None;
+        }
+
+        let x = parts[0].parse::<i32>().ok()?;
+        let y = parts[1].parse::<i32>().ok()?;
+
+        Some(Position::new(x, y))
+    }
+    fn to_key(&self) -> u64 {
+        // Use 32 bits for each coordinate (can handle ±2 billion)
+        ((self.x as u64) & 0xFFFFFFFF) | (((self.y as u64) & 0xFFFFFFFF) << 32)
+    }
+
+    // Extract x,y from the packed key
+    fn from_key(key: u64) -> Self {
+        let x = (key & 0xFFFFFFFF) as i32;
+        let y = ((key >> 32) & 0xFFFFFFFF) as i32;
+        Position::new(x, y)
+    }
 }
 
 #[derive(Resource)]
@@ -70,19 +139,14 @@ struct ConveyorPlacer {
     direction: Direction,
     tile_type: u32,
     preview_entity: Option<Entity>,
-    tiles: HashMap<u32, u32>,
 }
 
 impl Default for ConveyorPlacer {
     fn default() -> Self {
-        let mut tiles = HashMap::new();
-        tiles.insert(1, 10);
-        tiles.insert(2, 1);
         Self {
             direction: Direction::Up,
             tile_type: 1,
             preview_entity: None,
-            tiles,
         }
     }
 }
@@ -91,9 +155,185 @@ impl Default for ConveyorPlacer {
 struct WorldRes {
     tiles: HashMap<Position, (Box<dyn Tile>, u32)>,
     terrain: HashMap<Position, TerrainTileType>,
+    resources: HashMap<u32, u32>,
+    world_seed: u32, // Store the seed for terrain generation
     tick_timer: Timer,
     tick_count: i32,
     actions: Vec<Action>,
+}
+
+impl WorldRes {
+    // Updated save function for binary serialization with bincode 2.0.1
+    pub fn save(&self, path: impl AsRef<Path>) -> Result<(), io::Error> {
+        // Convert WorldRes to SerializableWorld with string keys
+        let serializable_world = SerializableWorld {
+            tiles: self
+                .tiles
+                .iter()
+                .map(|(pos, (tile, id))| {
+                    let serializable_tile =
+                        if let Some(conveyor) = tile.as_any().downcast_ref::<Conveyor>() {
+                            SerializableTile::Conveyor {
+                                position: conveyor.position,
+                                direction: conveyor.direction,
+                                item: conveyor.item,
+                            }
+                        } else if let Some(extractor) = tile.as_any().downcast_ref::<Extractor>() {
+                            SerializableTile::Extractor {
+                                position: extractor.position,
+                                direction: extractor.direction,
+                                spawn_item: extractor.spawn_item,
+                                interval: extractor.interval,
+                                required_terrain: extractor.required_terrain,
+                            }
+                        } else if let Some(factory) = tile.as_any().downcast_ref::<Factory>() {
+                            SerializableTile::Factory {
+                                position: factory.position,
+                                direction: factory.direction,
+                                factory_type: factory.factory_type,
+                                inventory: factory.inventory.clone(),
+                                capacity: factory.capacity.clone(),
+                            }
+                        } else {
+                            SerializableTile::Conveyor {
+                                position: *pos,
+                                direction: Direction::Up,
+                                item: Item::None,
+                            }
+                        };
+                    (pos.to_key(), (serializable_tile, *id))
+                })
+                .collect(),
+            resources: self.resources.clone(),
+            world_seed: self.world_seed,
+            tick_count: self.tick_count,
+        };
+
+        // Configure bincode with default settings
+        let config = config::standard().with_fixed_int_encoding().with_no_limit();
+
+        // Serialize with bincode
+        let serialized = bincode::encode_to_vec(&serializable_world, config)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
+        // Compress with flate2
+        let file = File::create(path)?;
+        let mut encoder = DeflateEncoder::new(file, Compression::best());
+        encoder.write_all(&serialized)?;
+        encoder.finish()?;
+
+        Ok(())
+    }
+
+    // Updated load function for binary serialization with bincode 2.0.1
+    pub fn load(path: impl AsRef<Path>) -> io::Result<Self> {
+        // Read the entire file into a buffer
+        let file = File::open(path)?;
+
+        let mut decoder = DeflateDecoder::new(file);
+        let mut buffer = Vec::new();
+        decoder.read_to_end(&mut buffer)?;
+
+        // Configure bincode with default settings
+        let config = config::standard().with_fixed_int_encoding().with_no_limit();
+
+        // Deserialize from binary
+        let (serializable_world, _): (SerializableWorld, _) =
+            bincode::decode_from_slice(&buffer, config)
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
+        // Convert SerializableWorld back to WorldRes
+        let mut tiles = HashMap::new();
+        let mut terrain = HashMap::new();
+
+        for (pos_key, (tile, id)) in serializable_world.tiles {
+            let pos = Position::from_key(pos_key);
+            let boxed_tile: Box<dyn Tile> = match tile {
+                SerializableTile::Conveyor {
+                    position,
+                    direction,
+                    item,
+                } => Box::new(Conveyor {
+                    position,
+                    direction,
+                    item,
+                }),
+                SerializableTile::Extractor {
+                    position,
+                    direction,
+                    spawn_item,
+                    interval,
+                    required_terrain,
+                } => Box::new(Extractor {
+                    position,
+                    direction,
+                    spawn_item,
+                    interval,
+                    required_terrain,
+                }),
+                SerializableTile::Factory {
+                    position,
+                    direction,
+                    factory_type,
+                    inventory,
+                    capacity,
+                } => Box::new(Factory {
+                    position,
+                    direction,
+                    factory_type,
+                    inventory,
+                    capacity,
+                }),
+            };
+
+            tiles.insert(pos, (boxed_tile, id));
+        }
+
+        // Regenerate terrain based on the seed
+        let perlin = Perlin::new(serializable_world.world_seed);
+        let noise_scale = 0.1;
+
+        for x in -20..=20 {
+            for y in -20..=20 {
+                let noise_val = perlin.get([x as f64 * noise_scale, y as f64 * noise_scale]);
+                let terrain_type = if noise_val > 0.0 {
+                    TerrainTileType::Grass
+                } else {
+                    TerrainTileType::Dirt
+                };
+                terrain.insert(Position::new(x, y), terrain_type);
+            }
+        }
+
+        Ok(WorldRes {
+            tiles,
+            terrain,
+            resources: serializable_world.resources,
+            world_seed: serializable_world.world_seed,
+            tick_timer: Timer::from_seconds(TICK_LENGTH, TimerMode::Repeating),
+            tick_count: serializable_world.tick_count,
+            actions: Vec::new(),
+        })
+    }
+}
+
+impl Default for WorldRes {
+    fn default() -> Self {
+        let world = WorldRes::load("savegame.ff");
+        let mut resources = HashMap::new();
+        resources.insert(1, 10);
+        resources.insert(2, 1);
+
+        return world.unwrap_or(WorldRes {
+            tiles: HashMap::new(),
+            terrain: HashMap::new(),
+            resources,
+            world_seed: 59, // Default seed value
+            tick_timer: Timer::from_seconds(TICK_LENGTH, TimerMode::Repeating),
+            tick_count: 0,
+            actions: Vec::new(),
+        });
+    }
 }
 
 #[derive(Component)]
@@ -268,13 +508,7 @@ fn recipe_for(factory_type: FactoryType) -> Recipe {
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
-        .insert_resource(WorldRes {
-            tiles: HashMap::new(),
-            terrain: HashMap::new(),
-            tick_timer: Timer::from_seconds(TICK_LENGTH, TimerMode::Repeating),
-            tick_count: 0,
-            actions: Vec::new(),
-        })
+        .insert_resource(WorldRes::default())
         .insert_resource(ConveyorPlacer::default())
         .add_systems(Startup, setup)
         .add_systems(
@@ -293,21 +527,25 @@ fn main() {
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut world: ResMut<WorldRes>) {
     commands.spawn(Camera2d::default());
 
-    let perlin = Perlin::new(59);
-    let noise_scale = 0.1;
+    // Only generate terrain if it's empty (new world)
+    if world.terrain.is_empty() {
+        let perlin = Perlin::new(world.world_seed);
+        let noise_scale = 0.1;
 
-    for x in -20..=20 {
-        for y in -20..=20 {
-            let noise_val = perlin.get([x as f64 * noise_scale, y as f64 * noise_scale]);
-            let terrain_type = if noise_val > 0.0 {
-                TerrainTileType::Grass
-            } else {
-                TerrainTileType::Dirt
-            };
-            world.terrain.insert(Position::new(x, y), terrain_type);
+        for x in -20..=20 {
+            for y in -20..=20 {
+                let noise_val = perlin.get([x as f64 * noise_scale, y as f64 * noise_scale]);
+                let terrain_type = if noise_val > 0.0 {
+                    TerrainTileType::Grass
+                } else {
+                    TerrainTileType::Dirt
+                };
+                world.terrain.insert(Position::new(x, y), terrain_type);
+            }
         }
     }
 
+    // Spawn terrain visuals
     for (pos, terrain) in world.terrain.iter() {
         let texture_path = match terrain {
             TerrainTileType::Grass => "textures/terrain/grass.png",
@@ -323,33 +561,37 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut world: ResM
         ));
     }
 
-    world.tiles.insert(
-        Position::new(-3, -3),
-        (
-            Box::new(Extractor {
-                interval: 5,
-                position: Position::new(-3, -3),
-                spawn_item: Item::Stone,
-                direction: Direction::Right,
-                required_terrain: TerrainTileType::Dirt,
-            }),
-            3,
-        ),
-    );
-    world.tiles.insert(
-        Position::new(3, 3),
-        (
-            Box::new(Extractor {
-                interval: 5,
-                position: Position::new(3, 3),
-                spawn_item: Item::Wood,
-                direction: Direction::Left,
-                required_terrain: TerrainTileType::Grass,
-            }),
-            3,
-        ),
-    );
+    // Add default tiles if it's a new world
+    if world.tiles.is_empty() {
+        world.tiles.insert(
+            Position::new(-3, -3),
+            (
+                Box::new(Extractor {
+                    interval: 5,
+                    position: Position::new(-3, -3),
+                    spawn_item: Item::Stone,
+                    direction: Direction::Right,
+                    required_terrain: TerrainTileType::Dirt,
+                }),
+                3,
+            ),
+        );
+        world.tiles.insert(
+            Position::new(3, 3),
+            (
+                Box::new(Extractor {
+                    interval: 5,
+                    position: Position::new(3, 3),
+                    spawn_item: Item::Wood,
+                    direction: Direction::Left,
+                    required_terrain: TerrainTileType::Grass,
+                }),
+                3,
+            ),
+        );
+    }
 
+    // Spawn tile visuals
     for (pos, _) in world.tiles.iter() {
         commands
             .spawn((
@@ -682,6 +924,9 @@ fn tick_tiles(
                 _ => {}
             }
         }
+        if let Err(err) = world.save("savegame.ff") {
+            eprintln!("Error saving game: {}", err);
+        }
     }
 }
 
@@ -999,109 +1244,124 @@ fn manage_tiles(
             let grid_x = (world_pos.x / TILE_SIZE).round() as i32;
             let grid_y = (world_pos.y / TILE_SIZE).round() as i32;
             let pos = Position::new(grid_x, grid_y);
+            let tile_type = placer.tile_type;
+            let direction = placer.direction;
 
             if world.tiles.contains_key(&pos) {
-                if let Some(obj) = world.tiles.get_mut(&pos) {
-                    if placer.tiles.get(&placer.tile_type).unwrap_or(&0) >= &1 {
-                        *placer.tiles.entry(obj.1).or_insert(0) += 1;
-                        let tile_type = placer.tile_type;
-                        *placer.tiles.entry(tile_type).or_insert(0) -= 1;
-                        *obj = match placer.tile_type {
-                            1 => (
-                                Box::new(Conveyor {
+                // 1. Get current tile ID and check resources first
+                let current_tile_id = world.tiles.get(&pos).map(|(_, id)| *id).unwrap_or(0);
+
+                // 2. Check if we have enough resources
+                if *world.resources.get(&tile_type).unwrap_or(&0) >= 1 {
+                    // 3. Update resources first (avoid nested borrows)
+                    *world.resources.entry(current_tile_id).or_insert(0) += 1;
+                    *world.resources.entry(tile_type).or_insert(0) -= 1;
+
+                    // 4. Now create the new tile (in a separate scope to avoid multiple borrows)
+                    let new_tile = match tile_type {
+                        1 => (
+                            Box::new(Conveyor {
+                                position: pos,
+                                direction,
+                                item: Item::None,
+                            }) as Box<dyn Tile>,
+                            1,
+                        ),
+                        2 => {
+                            let mut hashmap = HashMap::new();
+                            hashmap.insert(Item::Wood, 5);
+                            hashmap.insert(Item::Stone, 5);
+                            (
+                                Box::new(Factory {
+                                    factory_type: FactoryType::Assembler,
                                     position: pos,
-                                    direction: placer.direction,
-                                    item: Item::None,
-                                }),
-                                1,
-                            ),
-                            2 => {
-                                let mut hashmap = HashMap::new();
-                                hashmap.insert(Item::Wood, 5);
-                                hashmap.insert(Item::Stone, 5);
-                                (
-                                    Box::new(Factory {
-                                        factory_type: FactoryType::Assembler,
-                                        position: pos,
-                                        direction: placer.direction,
-                                        inventory: HashMap::new(),
-                                        capacity: hashmap,
-                                    }),
-                                    2,
-                                )
-                            }
-                            3 => (
-                                Box::new(Extractor {
-                                    position: pos,
-                                    direction: placer.direction,
-                                    interval: 5,
-                                    spawn_item: Item::Stone,
-                                    required_terrain: TerrainTileType::Dirt,
-                                }),
-                                3,
-                            ),
-                            _ => (
-                                Box::new(Conveyor {
-                                    position: pos,
-                                    direction: placer.direction,
-                                    item: Item::None,
-                                }),
-                                1,
-                            ),
-                        };
+                                    direction,
+                                    inventory: HashMap::new(),
+                                    capacity: hashmap,
+                                }) as Box<dyn Tile>,
+                                2,
+                            )
+                        }
+                        3 => (
+                            Box::new(Extractor {
+                                position: pos,
+                                direction,
+                                interval: 5,
+                                spawn_item: Item::Stone,
+                                required_terrain: TerrainTileType::Dirt,
+                            }) as Box<dyn Tile>,
+                            3,
+                        ),
+                        _ => (
+                            Box::new(Conveyor {
+                                position: pos,
+                                direction,
+                                item: Item::None,
+                            }) as Box<dyn Tile>,
+                            1,
+                        ),
+                    };
+
+                    // 5. Update the tile in the world
+                    if let Some(entry) = world.tiles.get_mut(&pos) {
+                        *entry = new_tile;
                     }
                 }
             } else {
-                if placer.tiles.get(&placer.tile_type).unwrap_or(&0) >= &1 {
-                    let tile_type = placer.tile_type;
-                    *placer.tiles.entry(tile_type).or_insert(0) -= 1;
-                    world.tiles.insert(
-                        pos,
-                        match placer.tile_type {
-                            1 => (
-                                Box::new(Conveyor {
-                                    position: pos,
-                                    direction: placer.direction,
-                                    item: Item::None,
-                                }),
-                                1,
-                            ),
-                            2 => {
-                                let mut hashmap = HashMap::new();
-                                hashmap.insert(Item::Wood, 5);
-                                hashmap.insert(Item::Stone, 5);
-                                (
-                                    Box::new(Factory {
-                                        factory_type: FactoryType::Assembler,
-                                        position: pos,
-                                        direction: placer.direction,
-                                        inventory: HashMap::new(),
-                                        capacity: hashmap,
-                                    }),
-                                    2,
-                                )
-                            }
-                            3 => (
-                                Box::new(Extractor {
-                                    position: pos,
-                                    direction: placer.direction,
-                                    interval: 5,
-                                    spawn_item: Item::Stone,
-                                    required_terrain: TerrainTileType::Dirt,
-                                }),
-                                3,
-                            ),
-                            _ => (
-                                Box::new(Conveyor {
-                                    position: pos,
-                                    direction: placer.direction,
-                                    item: Item::None,
-                                }),
-                                1,
-                            ),
-                        },
-                    );
+                // Creating a new tile
+                if *world.resources.get(&tile_type).unwrap_or(&0) >= 1 {
+                    // Update resources first
+                    *world.resources.entry(tile_type).or_insert(0) -= 1;
 
+                    // Create the new tile
+                    let new_tile = match tile_type {
+                        1 => (
+                            Box::new(Conveyor {
+                                position: pos,
+                                direction,
+                                item: Item::None,
+                            }) as Box<dyn Tile>,
+                            1,
+                        ),
+                        2 => {
+                            let mut hashmap = HashMap::new();
+                            hashmap.insert(Item::Wood, 5);
+                            hashmap.insert(Item::Stone, 5);
+                            (
+                                Box::new(Factory {
+                                    factory_type: FactoryType::Assembler,
+                                    position: pos,
+                                    direction,
+                                    inventory: HashMap::new(),
+                                    capacity: hashmap,
+                                }) as Box<dyn Tile>,
+                                2,
+                            )
+                        }
+                        3 => (
+                            Box::new(Extractor {
+                                position: pos,
+                                direction,
+                                interval: 5,
+                                spawn_item: Item::Stone,
+                                required_terrain: TerrainTileType::Dirt,
+                            }) as Box<dyn Tile>,
+                            3,
+                        ),
+                        _ => (
+                            Box::new(Conveyor {
+                                position: pos,
+                                direction,
+                                item: Item::None,
+                            }) as Box<dyn Tile>,
+                            1,
+                        ),
+                    };
+
+                    // Insert the tile
+                    world.tiles.insert(pos, new_tile);
+
+                    // Create the visual representation
                     commands
                         .spawn((
                             Sprite::from_image(asset_server.load("textures/tiles/belt.png")),
@@ -1145,7 +1405,7 @@ fn manage_tiles(
             let pos = Position::new(grid_x, grid_y);
 
             if let Some(entry) = world.tiles.remove_entry(&pos) {
-                *placer.tiles.entry(entry.1.1).or_insert(0) += 1;
+                *world.resources.entry(entry.1.1).or_insert(0) += 1;
             }
         }
     }
