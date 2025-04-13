@@ -1,9 +1,9 @@
 use bevy::{color::palettes::css, input::mouse::MouseWheel, prelude::*, window::PrimaryWindow};
+use bevy_embedded_assets::{EmbeddedAssetPlugin, PluginMode};
 use bincode::{Decode, Encode, config};
 use flate2::{Compression, read::DeflateDecoder, write::DeflateEncoder};
 use noise::{NoiseFn, Perlin};
 use serde::{Deserialize, Serialize};
-
 use std::{
     any::Any,
     collections::{HashMap, HashSet},
@@ -476,7 +476,12 @@ fn recipe_for(factory_type: FactoryType) -> Recipe {
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins)
+        .add_plugins((
+            DefaultPlugins,
+            EmbeddedAssetPlugin {
+                mode: PluginMode::AutoLoad,
+            },
+        ))
         .insert_resource(WorldRes::default())
         .insert_resource(ConveyorPlacer::default())
         .add_systems(Startup, setup)
@@ -515,8 +520,8 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut world: ResM
 
     for (pos, terrain) in world.terrain.iter() {
         let texture_path = match terrain {
-            TerrainTileType::Grass => "textures/terrain/grass.png",
-            TerrainTileType::Dirt => "textures/terrain/dirt.png",
+            TerrainTileType::Grass => "embedded://textures/terrain/grass.png",
+            TerrainTileType::Dirt => "embedded://textures/terrain/dirt.png",
         };
         commands.spawn((
             Sprite::from_image(asset_server.load(texture_path)),
@@ -560,7 +565,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut world: ResM
     for (pos, _) in world.tiles.iter() {
         commands
             .spawn((
-                Sprite::from_image(asset_server.load("textures/tiles/belt.png")),
+                Sprite::from_image(asset_server.load("embedded://textures/tiles/belt.png")),
                 Transform {
                     translation: Vec3::new(pos.x as f32 * TILE_SIZE, pos.y as f32 * TILE_SIZE, 0.0),
                     scale: Vec3::splat(TILE_SIZE / IMAGE_SIZE),
@@ -570,7 +575,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut world: ResM
             ))
             .with_children(|parent| {
                 parent.spawn((
-                    Sprite::from_image(asset_server.load("textures/items/none.png")),
+                    Sprite::from_image(asset_server.load("embedded://textures/items/none.png")),
                     Transform::from_scale(Vec3::splat(0.5)),
                 ));
             });
@@ -718,10 +723,10 @@ fn tick_tiles(
                                         timer: Timer::from_seconds(TICK_LENGTH, TimerMode::Once),
                                     },
                                     Sprite::from_image(asset_server.load(match item {
-                                        Item::None => "textures/items/none.png",
-                                        Item::Wood => "textures/items/wood.png",
-                                        Item::Stone => "textures/items/stone.png",
-                                        Item::Product => "textures/items/product.png",
+                                        Item::None => "embedded://textures/items/none.png",
+                                        Item::Wood => "embedded://textures/items/wood.png",
+                                        Item::Stone => "embedded://textures/items/stone.png",
+                                        Item::Product => "embedded://textures/items/product.png",
                                     })),
                                     Transform {
                                         translation: start_pos,
@@ -753,10 +758,10 @@ fn tick_tiles(
                                         timer: Timer::from_seconds(TICK_LENGTH, TimerMode::Once),
                                     },
                                     Sprite::from_image(asset_server.load(match item {
-                                        Item::None => "textures/items/none.png",
-                                        Item::Wood => "textures/items/wood.png",
-                                        Item::Stone => "textures/items/stone.png",
-                                        Item::Product => "textures/items/product.png",
+                                        Item::None => "embedded://textures/items/none.png",
+                                        Item::Wood => "embedded://textures/items/wood.png",
+                                        Item::Stone => "embedded://textures/items/stone.png",
+                                        Item::Product => "embedded://textures/items/product.png",
                                     })),
                                     Transform {
                                         translation: start_pos,
@@ -813,10 +818,18 @@ fn tick_tiles(
                                             },
                                             Sprite::from_image(asset_server.load(
                                                 match produced_item {
-                                                    Item::None => "textures/items/none.png",
-                                                    Item::Wood => "textures/items/wood.png",
-                                                    Item::Stone => "textures/items/stone.png",
-                                                    Item::Product => "textures/items/product.png",
+                                                    Item::None => {
+                                                        "embedded://textures/items/none.png"
+                                                    }
+                                                    Item::Wood => {
+                                                        "embedded://textures/items/wood.png"
+                                                    }
+                                                    Item::Stone => {
+                                                        "embedded://textures/items/stone.png"
+                                                    }
+                                                    Item::Product => {
+                                                        "embedded://textures/items/product.png"
+                                                    }
                                                 },
                                             )),
                                             Transform {
@@ -869,10 +882,12 @@ fn tick_tiles(
                                             ),
                                         },
                                         Sprite::from_image(asset_server.load(match item {
-                                            Item::None => "textures/items/none.png",
-                                            Item::Wood => "textures/items/wood.png",
-                                            Item::Stone => "textures/items/stone.png",
-                                            Item::Product => "textures/items/product.png",
+                                            Item::None => "embedded://textures/items/none.png",
+                                            Item::Wood => "embedded://textures/items/wood.png",
+                                            Item::Stone => "embedded://textures/items/stone.png",
+                                            Item::Product => {
+                                                "embedded://textures/items/product.png"
+                                            }
                                         })),
                                         Transform {
                                             translation: start_pos,
@@ -985,7 +1000,7 @@ fn update_tile_visuals(
                     tile_sprite.pos.y as f32 * TILE_SIZE,
                     0.0,
                 );
-                sprite.image = asset_server.load("textures/tiles/belt.png");
+                sprite.image = asset_server.load("embedded://textures/tiles/belt.png");
                 transform.rotation = match conveyor.direction {
                     Direction::Up => Quat::IDENTITY,
                     Direction::Down => Quat::from_rotation_z(PI),
@@ -1012,10 +1027,18 @@ fn update_tile_visuals(
                             };
 
                             child_sprite.image = match conveyor.item {
-                                Item::None => asset_server.load("textures/items/none.png"),
-                                Item::Wood => asset_server.load("textures/items/wood.png"),
-                                Item::Stone => asset_server.load("textures/items/stone.png"),
-                                Item::Product => asset_server.load("textures/items/product.png"),
+                                Item::None => {
+                                    asset_server.load("embedded://textures/items/none.png")
+                                }
+                                Item::Wood => {
+                                    asset_server.load("embedded://textures/items/wood.png")
+                                }
+                                Item::Stone => {
+                                    asset_server.load("embedded://textures/items/stone.png")
+                                }
+                                Item::Product => {
+                                    asset_server.load("embedded://textures/items/product.png")
+                                }
                             };
                         }
                     }
@@ -1034,7 +1057,7 @@ fn update_tile_visuals(
                         .unwrap()
                         .factory_type
                     {
-                        FactoryType::Assembler => "textures/tiles/assembler.png",
+                        FactoryType::Assembler => "embedded://textures/tiles/assembler.png",
                     },
                 );
                 transform.rotation = match factory.direction {
@@ -1057,7 +1080,7 @@ fn update_tile_visuals(
                     tile_sprite.pos.y as f32 * TILE_SIZE,
                     2.0,
                 );
-                sprite.image = asset_server.load("textures/tiles/extractor.png");
+                sprite.image = asset_server.load("embedded://textures/tiles/extractor.png");
                 transform.rotation = match extractor.direction {
                     Direction::Up => Quat::IDENTITY,
                     Direction::Down => Quat::from_rotation_z(PI),
@@ -1071,10 +1094,18 @@ fn update_tile_visuals(
                         {
                             child_transform.translation = Vec3::new(0.0, 0.0, 1.0);
                             child_sprite.image = match extractor.spawn_item {
-                                Item::None => asset_server.load("textures/items/none.png"),
-                                Item::Wood => asset_server.load("textures/items/wood.png"),
-                                Item::Stone => asset_server.load("textures/items/stone.png"),
-                                Item::Product => asset_server.load("textures/items/product.png"),
+                                Item::None => {
+                                    asset_server.load("embedded://textures/items/none.png")
+                                }
+                                Item::Wood => {
+                                    asset_server.load("embedded://textures/items/wood.png")
+                                }
+                                Item::Stone => {
+                                    asset_server.load("embedded://textures/items/stone.png")
+                                }
+                                Item::Product => {
+                                    asset_server.load("embedded://textures/items/product.png")
+                                }
                             };
                         }
                     }
@@ -1160,11 +1191,11 @@ fn manage_tiles(
         }
 
         let texture_path = match placer.tile_type {
-            0 => "textures/tiles/none.png",
-            1 => "textures/tiles/belt.png",
-            2 => "textures/tiles/assembler.png",
-            3 => "textures/tiles/extractor.png",
-            _ => "textures/tiles/belt.png",
+            0 => "embedded://textures/tiles/none.png",
+            1 => "embedded://textures/tiles/belt.png",
+            2 => "embedded://textures/tiles/assembler.png",
+            3 => "embedded://textures/tiles/extractor.png",
+            _ => "embedded://textures/tiles/belt.png",
         };
 
         let preview_entity = commands
@@ -1319,7 +1350,9 @@ fn manage_tiles(
 
                     commands
                         .spawn((
-                            Sprite::from_image(asset_server.load("textures/tiles/belt.png")),
+                            Sprite::from_image(
+                                asset_server.load("embedded://textures/tiles/belt.png"),
+                            ),
                             Transform {
                                 translation: Vec3::new(
                                     pos.x as f32 * TILE_SIZE,
@@ -1333,7 +1366,9 @@ fn manage_tiles(
                         ))
                         .with_children(|parent| {
                             parent.spawn((
-                                Sprite::from_image(asset_server.load("textures/items/none.png")),
+                                Sprite::from_image(
+                                    asset_server.load("embedded://textures/items/none.png"),
+                                ),
                                 Transform::from_scale(Vec3::splat(0.5)),
                             ));
                         });
