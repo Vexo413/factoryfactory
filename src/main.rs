@@ -71,23 +71,26 @@ struct ConveyorPlacer {
     direction: Direction,
     tile_type: u32,
     preview_entity: Option<Entity>,
-    tiles: HashMap<u32, u32>
+    tiles: HashMap<u32, u32>,
 }
 
 impl Default for ConveyorPlacer {
     fn default() -> Self {
+        let mut tiles = HashMap::new();
+        tiles.insert(1, 10);
+        tiles.insert(2, 1);
         Self {
             direction: Direction::Up,
-            tile_type: 0,
+            tile_type: 1,
             preview_entity: None,
-            tiles: HashMap::new()
+            tiles,
         }
     }
 }
 
 #[derive(Resource)]
 struct WorldRes {
-    tiles: HashMap<Position, Box<dyn Tile>>,
+    tiles: HashMap<Position, (Box<dyn Tile>, u32)>,
     terrain: HashMap<Position, TerrainTileType>,
     tick_timer: Timer,
     tick_count: i32,
@@ -133,10 +136,10 @@ impl Tile for Conveyor {
 
         if let Some(target_tile) = world.tiles.get(&end_position) {
             if self.item != Item::None {
-                if target_tile.as_any().is::<Conveyor>() {
+                if target_tile.0.as_any().is::<Conveyor>() {
                     return Action::Move(start_position, end_position, self.item);
                 }
-                if target_tile.as_any().is::<Factory>() {
+                if target_tile.0.as_any().is::<Factory>() {
                     return Action::MoveFactory(start_position, end_position, self.item);
                 }
             }
@@ -227,7 +230,7 @@ impl Tile for Factory {
             Direction::Right => end_position.x += 1,
         }
         if let Some(tile) = world.tiles.get(&end_position) {
-            if let Some(conveyor) = tile.as_any().downcast_ref::<Conveyor>() {
+            if let Some(conveyor) = tile.0.as_any().downcast_ref::<Conveyor>() {
                 if self.can_produce() && conveyor.item == Item::None {
                     return Action::Produce(self.position);
                 }
@@ -320,26 +323,32 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut world: ResM
 
     world.tiles.insert(
         Position::new(-3, -3),
-        Box::new(Extractor {
-            interval: 5,
-            position: Position::new(-3, -3),
-            spawn_item: Item::Stone,
-            direction: Direction::Right,
-            required_terrain: TerrainTileType::Dirt,
-        }),
+        (
+            Box::new(Extractor {
+                interval: 5,
+                position: Position::new(-3, -3),
+                spawn_item: Item::Stone,
+                direction: Direction::Right,
+                required_terrain: TerrainTileType::Dirt,
+            }),
+            3,
+        ),
     );
     world.tiles.insert(
         Position::new(3, 3),
-        Box::new(Extractor {
-            interval: 5,
-            position: Position::new(3, 3),
-            spawn_item: Item::Wood,
-            direction: Direction::Left,
-            required_terrain: TerrainTileType::Grass,
-        }),
+        (
+            Box::new(Extractor {
+                interval: 5,
+                position: Position::new(3, 3),
+                spawn_item: Item::Wood,
+                direction: Direction::Left,
+                required_terrain: TerrainTileType::Grass,
+            }),
+            3,
+        ),
     );
 
-    for (pos, _tile) in world.tiles.iter() {
+    for (pos, _) in world.tiles.iter() {
         commands
             .spawn((
                 Sprite::from_image(asset_server.load("textures/tiles/belt.png")),
@@ -375,12 +384,12 @@ fn tick_tiles(
             match action {
                 Action::Move(start, end, item) => {
                     if let Some(tile) = world.tiles.get_mut(&end) {
-                        if let Some(end_conveyor) = tile.as_any_mut().downcast_mut::<Conveyor>() {
+                        if let Some(end_conveyor) = tile.0.as_any_mut().downcast_mut::<Conveyor>() {
                             if end_conveyor.item == Item::None {
                                 end_conveyor.item = item;
                                 if let Some(tile) = world.tiles.get_mut(&start) {
                                     if let Some(start_conveyor) =
-                                        tile.as_any_mut().downcast_mut::<Conveyor>()
+                                        tile.0.as_any_mut().downcast_mut::<Conveyor>()
                                     {
                                         start_conveyor.item = Item::None;
                                     }
@@ -394,6 +403,7 @@ fn tick_tiles(
                         .tiles
                         .get_mut(&end)
                         .unwrap()
+                        .0
                         .as_any_mut()
                         .downcast_mut::<Factory>()
                     {
@@ -406,6 +416,7 @@ fn tick_tiles(
                                 .tiles
                                 .get_mut(&start)
                                 .unwrap()
+                                .0
                                 .as_any_mut()
                                 .downcast_mut::<Conveyor>()
                             {
@@ -419,6 +430,7 @@ fn tick_tiles(
                         .tiles
                         .get_mut(&position)
                         .unwrap()
+                        .0
                         .as_any_mut()
                         .downcast_mut::<Factory>()
                     {
@@ -431,9 +443,9 @@ fn tick_tiles(
                                 Direction::Right => end_position.x += 1,
                             }
 
-                            if let Some(tiles) = world.tiles.get_mut(&end_position) {
+                            if let Some(tile) = world.tiles.get_mut(&end_position) {
                                 if let Some(conveyor) =
-                                    tiles.as_any_mut().downcast_mut::<Conveyor>()
+                                    tile.0.as_any_mut().downcast_mut::<Conveyor>()
                                 {
                                     if conveyor.item == Item::None {
                                         conveyor.item = produced_item;
@@ -445,6 +457,7 @@ fn tick_tiles(
                         .tiles
                         .get_mut(&position)
                         .unwrap()
+                        .0
                         .as_any_mut()
                         .downcast_mut::<Extractor>()
                     {
@@ -458,7 +471,8 @@ fn tick_tiles(
                         }
 
                         if let Some(tiles) = world.tiles.get_mut(&end_position) {
-                            if let Some(conveyor) = tiles.as_any_mut().downcast_mut::<Conveyor>() {
+                            if let Some(conveyor) = tiles.0.as_any_mut().downcast_mut::<Conveyor>()
+                            {
                                 if conveyor.item == Item::None {
                                     conveyor.item = item;
                                 }
@@ -473,7 +487,7 @@ fn tick_tiles(
         let mut next = Vec::new();
 
         for tile in world.tiles.values() {
-            let action = tile.tick(&world);
+            let action = tile.0.tick(&world);
             next.push(action);
         }
 
@@ -486,7 +500,7 @@ fn tick_tiles(
             match action {
                 Action::Move(start, end, item) => {
                     if let Some(tile) = world.tiles.get(&end) {
-                        if let Some(end_conveyor) = tile.as_any().downcast_ref::<Conveyor>() {
+                        if let Some(end_conveyor) = tile.0.as_any().downcast_ref::<Conveyor>() {
                             if end_conveyor.item == Item::None || moved.contains(&end) {
                                 moved.push(*start);
 
@@ -527,6 +541,7 @@ fn tick_tiles(
                         .tiles
                         .get(&end)
                         .unwrap()
+                        .0
                         .as_any()
                         .downcast_ref::<Factory>()
                     {
@@ -669,7 +684,7 @@ fn update_tile_visual_system(
 
         if let Some(tile) = world.tiles.get(&tile_sprite.pos) {
             existing_positions.insert(tile_sprite.pos);
-            if let Some(conveyor) = tile.as_any().downcast_ref::<Conveyor>() {
+            if let Some(conveyor) = tile.0.as_any().downcast_ref::<Conveyor>() {
                 sprite.image = asset_server.load("textures/tiles/belt.png");
                 transform.rotation = match conveyor.direction {
                     Direction::Up => Quat::IDENTITY,
@@ -707,9 +722,10 @@ fn update_tile_visual_system(
                         }
                     }
                 }
-            } else if let Some(factory) = tile.as_any().downcast_ref::<Factory>() {
+            } else if let Some(factory) = tile.0.as_any().downcast_ref::<Factory>() {
                 sprite.image = asset_server.load(
                     match tile
+                        .0
                         .as_any()
                         .downcast_ref::<Factory>()
                         .unwrap()
@@ -732,7 +748,7 @@ fn update_tile_visual_system(
                         }
                     }
                 }
-            } else if let Some(extractor) = tile.as_any().downcast_ref::<Extractor>() {
+            } else if let Some(extractor) = tile.0.as_any().downcast_ref::<Extractor>() {
                 sprite.image = asset_server.load("textures/tiles/extractor.png");
                 transform.rotation = match extractor.direction {
                     Direction::Up => Quat::IDENTITY,
@@ -794,14 +810,14 @@ fn manage_tiles(
     mut commands: Commands,
     query: Query<(Entity, &TileSprite)>,
 ) {
-    if keyboard_input.pressed(KeyCode::Digit0) {
-        placer.tile_type = 0;
-    }
     if keyboard_input.pressed(KeyCode::Digit1) {
         placer.tile_type = 1;
     }
     if keyboard_input.pressed(KeyCode::Digit2) {
         placer.tile_type = 2;
+    }
+    if keyboard_input.pressed(KeyCode::Digit3) {
+        placer.tile_type = 3;
     }
 
     for event in mouse_wheel_events.read() {
@@ -843,9 +859,9 @@ fn manage_tiles(
         }
 
         let texture_path = match placer.tile_type {
-            0 => "textures/tiles/belt.png",
-            1 => "textures/tiles/assembler.png",
-            2 => "textures/tiles/extractor.png",
+            1 => "textures/tiles/belt.png",
+            2 => "textures/tiles/assembler.png",
+            3 => "textures/tiles/extractor.png",
             _ => "textures/tiles/belt.png",
         };
 
@@ -892,99 +908,131 @@ fn manage_tiles(
 
             if world.tiles.contains_key(&pos) {
                 if let Some(obj) = world.tiles.get_mut(&pos) {
-                    *obj = match placer.tile_type {
-                        0 => Box::new(Conveyor {
-                            position: pos,
-                            direction: placer.direction,
-                            item: Item::None,
-                        }),
-                        1 => {
-                            let mut hashmap = HashMap::new();
-                            hashmap.insert(Item::Wood, 5);
-                            hashmap.insert(Item::Stone, 5);
-                            Box::new(Factory {
-                                factory_type: FactoryType::Assembler,
-                                position: pos,
-                                direction: placer.direction,
-                                inventory: HashMap::new(),
-                                capacity: hashmap,
-                            })
-                        }
-                        2 => Box::new(Extractor {
-                            position: pos,
-                            direction: placer.direction,
-                            interval: 5,
-                            spawn_item: Item::Stone,
-                            required_terrain: TerrainTileType::Dirt,
-                        }),
-                        _ => Box::new(Conveyor {
-                            position: pos,
-                            direction: placer.direction,
-                            item: Item::None,
-                        }),
-                    };
+                    if placer.tiles.get(&placer.tile_type).unwrap_or(&0) >= &1 {
+                        *placer.tiles.entry(obj.1).or_insert(0) += 1;
+                        let tile_type = placer.tile_type;
+                        *placer.tiles.entry(tile_type).or_insert(0) -= 1;
+                        *obj = match placer.tile_type {
+                            1 => (
+                                Box::new(Conveyor {
+                                    position: pos,
+                                    direction: placer.direction,
+                                    item: Item::None,
+                                }),
+                                1,
+                            ),
+                            2 => {
+                                let mut hashmap = HashMap::new();
+                                hashmap.insert(Item::Wood, 5);
+                                hashmap.insert(Item::Stone, 5);
+                                (
+                                    Box::new(Factory {
+                                        factory_type: FactoryType::Assembler,
+                                        position: pos,
+                                        direction: placer.direction,
+                                        inventory: HashMap::new(),
+                                        capacity: hashmap,
+                                    }),
+                                    2,
+                                )
+                            }
+                            3 => (
+                                Box::new(Extractor {
+                                    position: pos,
+                                    direction: placer.direction,
+                                    interval: 5,
+                                    spawn_item: Item::Stone,
+                                    required_terrain: TerrainTileType::Dirt,
+                                }),
+                                3,
+                            ),
+                            _ => (
+                                Box::new(Conveyor {
+                                    position: pos,
+                                    direction: placer.direction,
+                                    item: Item::None,
+                                }),
+                                1,
+                            ),
+                        };
+                    }
                 }
             } else {
                 info!(
                     "Placing conveyor at {:?} facing {:?}",
                     pos, placer.direction
                 );
-
-                world.tiles.insert(
-                    pos,
-                    match placer.tile_type {
-                        0 => Box::new(Conveyor {
-                            position: pos,
-                            direction: placer.direction,
-                            item: Item::None,
-                        }),
-                        1 => {
-                            let mut hashmap = HashMap::new();
-                            hashmap.insert(Item::Wood, 5);
-                            hashmap.insert(Item::Stone, 5);
-                            Box::new(Factory {
-                                factory_type: FactoryType::Assembler,
-                                position: pos,
-                                direction: placer.direction,
-                                inventory: HashMap::new(),
-                                capacity: hashmap,
-                            })
-                        }
-                        2 => Box::new(Extractor {
-                            position: pos,
-                            direction: placer.direction,
-                            interval: 5,
-                            spawn_item: Item::Stone,
-                            required_terrain: TerrainTileType::Dirt,
-                        }),
-                        _ => Box::new(Conveyor {
-                            position: pos,
-                            direction: placer.direction,
-                            item: Item::None,
-                        }),
-                    },
-                );
-
-                commands
-                    .spawn((
-                        Sprite::from_image(asset_server.load("textures/tiles/belt.png")),
-                        Transform {
-                            translation: Vec3::new(
-                                pos.x as f32 * TILE_SIZE,
-                                pos.y as f32 * TILE_SIZE,
-                                0.0,
+                if placer.tiles.get(&placer.tile_type).unwrap_or(&0) >= &1 {
+                    let tile_type = placer.tile_type;
+                    *placer.tiles.entry(tile_type).or_insert(0) -= 1;
+                    world.tiles.insert(
+                        pos,
+                        match placer.tile_type {
+                            1 => (
+                                Box::new(Conveyor {
+                                    position: pos,
+                                    direction: placer.direction,
+                                    item: Item::None,
+                                }),
+                                1,
                             ),
-                            scale: Vec3::splat(TILE_SIZE / IMAGE_SIZE),
-                            ..Default::default()
+                            2 => {
+                                let mut hashmap = HashMap::new();
+                                hashmap.insert(Item::Wood, 5);
+                                hashmap.insert(Item::Stone, 5);
+                                (
+                                    Box::new(Factory {
+                                        factory_type: FactoryType::Assembler,
+                                        position: pos,
+                                        direction: placer.direction,
+                                        inventory: HashMap::new(),
+                                        capacity: hashmap,
+                                    }),
+                                    2,
+                                )
+                            }
+                            3 => (
+                                Box::new(Extractor {
+                                    position: pos,
+                                    direction: placer.direction,
+                                    interval: 5,
+                                    spawn_item: Item::Stone,
+                                    required_terrain: TerrainTileType::Dirt,
+                                }),
+                                3,
+                            ),
+                            _ => (
+                                Box::new(Conveyor {
+                                    position: pos,
+                                    direction: placer.direction,
+                                    item: Item::None,
+                                }),
+                                1,
+                            ),
                         },
-                        TileSprite { pos },
-                    ))
-                    .with_children(|parent| {
-                        parent.spawn((
-                            Sprite::from_image(asset_server.load("textures/items/none.png")),
-                            Transform::from_scale(Vec3::splat(0.5)),
-                        ));
-                    });
+                    );
+
+                    commands
+                        .spawn((
+                            Sprite::from_image(asset_server.load("textures/tiles/belt.png")),
+                            Transform {
+                                translation: Vec3::new(
+                                    pos.x as f32 * TILE_SIZE,
+                                    pos.y as f32 * TILE_SIZE,
+                                    0.0,
+                                ),
+                                scale: Vec3::splat(TILE_SIZE / IMAGE_SIZE),
+                                ..Default::default()
+                            },
+                            TileSprite { pos },
+                        ))
+                        .with_children(|parent| {
+                            parent.spawn((
+                                Sprite::from_image(asset_server.load("textures/items/none.png")),
+                                Transform::from_scale(Vec3::splat(0.5)),
+                            ));
+                        });
+                }
             }
         }
     }
@@ -1005,7 +1053,9 @@ fn manage_tiles(
             let grid_y = (world_pos.y / TILE_SIZE).round() as i32;
             let pos = Position::new(grid_x, grid_y);
 
-            world.tiles.remove_entry(&pos);
+            if let Some(entry) = world.tiles.remove_entry(&pos) {
+                *placer.tiles.entry(entry.1.1).or_insert(0) += 1;
+            }
         }
     }
 }
