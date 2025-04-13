@@ -217,6 +217,14 @@ impl Factory {
             None
         }
     }
+    fn get_produce_item(&self) -> Option<(Item, u32)> {
+        let recipe = recipe_for(self.factory_type);
+        if self.can_produce() {
+            Some(recipe.output)
+        } else {
+            None
+        }
+    }
 }
 
 impl Tile for Factory {
@@ -549,22 +557,7 @@ fn tick_tiles(
                             > factory.inventory.get(&item).unwrap_or(&0_u32)
                         {
                             moved.push(*start);
-                            for (tile_sprite, children) in query.iter() {
-                                if tile_sprite.pos == *start {
-                                    for &child in children.iter() {
-                                        if let Ok(visibility) = child_query.get_mut(child) {
-                                            *visibility.into_inner() = Visibility::Hidden;
-                                        }
-                                    }
-                                }
-                                if tile_sprite.pos == *end {
-                                    for &child in children.iter() {
-                                        if let Ok(visibility) = child_query.get_mut(child) {
-                                            *visibility.into_inner() = Visibility::Hidden;
-                                        }
-                                    }
-                                }
-                            }
+
                             let start_pos = Vec3::new(
                                 start.x as f32 * TILE_SIZE,
                                 start.y as f32 * TILE_SIZE,
@@ -593,6 +586,124 @@ fn tick_tiles(
                         }
                     }
                 }
+                Action::Produce(position) => {
+                    if let Some(factory) = world
+                        .tiles
+                        .get(&position)
+                        .unwrap()
+                        .0
+                        .as_any()
+                        .downcast_ref::<Factory>()
+                    {
+                        if let Some((produced_item, _produced_qty)) = factory.get_produce_item() {
+                            let mut end_position = factory.position;
+                            match factory.direction {
+                                Direction::Up => end_position.y += 1,
+                                Direction::Down => end_position.y -= 1,
+                                Direction::Left => end_position.x -= 1,
+                                Direction::Right => end_position.x += 1,
+                            }
+
+                            if let Some(tile) = world.tiles.get(&end_position) {
+                                if let Some(conveyor) = tile.0.as_any().downcast_ref::<Conveyor>() {
+                                    if conveyor.item == Item::None || moved.contains(&end_position)
+                                    {
+                                        moved.push(*position);
+                                        // Spawn production animation
+                                        let start_pos = Vec3::new(
+                                            position.x as f32 * TILE_SIZE,
+                                            position.y as f32 * TILE_SIZE,
+                                            1.0,
+                                        );
+                                        let end_pos = Vec3::new(
+                                            end_position.x as f32 * TILE_SIZE,
+                                            end_position.y as f32 * TILE_SIZE,
+                                            1.0,
+                                        );
+                                        commands.spawn((
+                                            ItemAnimation {
+                                                start_pos,
+                                                end_pos,
+                                                timer: Timer::from_seconds(
+                                                    TICK_LENGTH,
+                                                    TimerMode::Once,
+                                                ),
+                                            },
+                                            Sprite::from_image(asset_server.load(
+                                                match produced_item {
+                                                    Item::None => "textures/items/none.png",
+                                                    Item::Wood => "textures/items/wood.png",
+                                                    Item::Stone => "textures/items/stone.png",
+                                                    Item::Product => "textures/items/product.png",
+                                                },
+                                            )),
+                                            Transform {
+                                                translation: start_pos,
+                                                scale: Vec3::splat(ITEM_SIZE / IMAGE_SIZE),
+                                                ..Default::default()
+                                            },
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    } else if let Some(extractor) = world
+                        .tiles
+                        .get(&position)
+                        .unwrap()
+                        .0
+                        .as_any()
+                        .downcast_ref::<Extractor>()
+                    {
+                        let mut end_position = extractor.position;
+                        let item = extractor.spawn_item;
+                        match extractor.direction {
+                            Direction::Up => end_position.y += 1,
+                            Direction::Down => end_position.y -= 1,
+                            Direction::Left => end_position.x -= 1,
+                            Direction::Right => end_position.x += 1,
+                        }
+                        if let Some(tiles) = world.tiles.get(&end_position) {
+                            if let Some(conveyor) = tiles.0.as_any().downcast_ref::<Conveyor>() {
+                                if conveyor.item == Item::None || moved.contains(&end_position) {
+                                    moved.push(*position);
+                                    let start_pos = Vec3::new(
+                                        position.x as f32 * TILE_SIZE,
+                                        position.y as f32 * TILE_SIZE,
+                                        1.0,
+                                    );
+                                    let end_pos = Vec3::new(
+                                        end_position.x as f32 * TILE_SIZE,
+                                        end_position.y as f32 * TILE_SIZE,
+                                        1.0,
+                                    );
+                                    commands.spawn((
+                                        ItemAnimation {
+                                            start_pos,
+                                            end_pos,
+                                            timer: Timer::from_seconds(
+                                                TICK_LENGTH,
+                                                TimerMode::Once,
+                                            ),
+                                        },
+                                        Sprite::from_image(asset_server.load(match item {
+                                            Item::None => "textures/items/none.png",
+                                            Item::Wood => "textures/items/wood.png",
+                                            Item::Stone => "textures/items/stone.png",
+                                            Item::Product => "textures/items/product.png",
+                                        })),
+                                        Transform {
+                                            translation: start_pos,
+                                            scale: Vec3::splat(ITEM_SIZE / IMAGE_SIZE),
+                                            ..Default::default()
+                                        },
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+
                 _ => {}
             }
         }
@@ -685,6 +796,11 @@ fn update_tile_visual_system(
         if let Some(tile) = world.tiles.get(&tile_sprite.pos) {
             existing_positions.insert(tile_sprite.pos);
             if let Some(conveyor) = tile.0.as_any().downcast_ref::<Conveyor>() {
+                transform.translation = Vec3::new(
+                    tile_sprite.pos.x as f32 * TILE_SIZE,
+                    tile_sprite.pos.y as f32 * TILE_SIZE,
+                    0.0,
+                );
                 sprite.image = asset_server.load("textures/tiles/belt.png");
                 transform.rotation = match conveyor.direction {
                     Direction::Up => Quat::IDENTITY,
@@ -723,6 +839,11 @@ fn update_tile_visual_system(
                     }
                 }
             } else if let Some(factory) = tile.0.as_any().downcast_ref::<Factory>() {
+                transform.translation = Vec3::new(
+                    tile_sprite.pos.x as f32 * TILE_SIZE,
+                    tile_sprite.pos.y as f32 * TILE_SIZE,
+                    2.0,
+                );
                 sprite.image = asset_server.load(
                     match tile
                         .0
@@ -749,6 +870,11 @@ fn update_tile_visual_system(
                     }
                 }
             } else if let Some(extractor) = tile.0.as_any().downcast_ref::<Extractor>() {
+                transform.translation = Vec3::new(
+                    tile_sprite.pos.x as f32 * TILE_SIZE,
+                    tile_sprite.pos.y as f32 * TILE_SIZE,
+                    2.0,
+                );
                 sprite.image = asset_server.load("textures/tiles/extractor.png");
                 transform.rotation = match extractor.direction {
                     Direction::Up => Quat::IDENTITY,
