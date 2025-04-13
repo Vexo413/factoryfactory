@@ -1388,7 +1388,7 @@ fn manage_tiles(
             }
         }
     }
-    if mouse_button_input.pressed(MouseButton::Right) {
+    if mouse_button_input.just_pressed(MouseButton::Right) {
         let window = windows.single();
         if let Some(screen_pos) = window.cursor_position() {
             let (camera, camera_transform) = camera_query.single();
