@@ -1252,7 +1252,9 @@ fn manage_tiles(
                 let current_tile_id = world.tiles.get(&pos).map(|(_, id)| *id).unwrap_or(0);
 
                 // 2. Check if we have enough resources
-                if *world.resources.get(&tile_type).unwrap_or(&0) >= 1 {
+                if *world.resources.get(&tile_type).unwrap_or(&0) >= 1
+                    || placer.tile_type == current_tile_id
+                {
                     // 3. Update resources first (avoid nested borrows)
                     *world.resources.entry(current_tile_id).or_insert(0) += 1;
                     *world.resources.entry(tile_type).or_insert(0) -= 1;
@@ -1387,7 +1389,6 @@ fn manage_tiles(
         }
     }
     if mouse_button_input.pressed(MouseButton::Right) {
-        placer.tile_type = 0;
         let window = windows.single();
         if let Some(screen_pos) = window.cursor_position() {
             let (camera, camera_transform) = camera_query.single();
@@ -1406,6 +1407,8 @@ fn manage_tiles(
 
             if let Some(entry) = world.tiles.remove_entry(&pos) {
                 *world.resources.entry(entry.1.1).or_insert(0) += 1;
+            } else {
+                placer.tile_type = 0;
             }
         }
     }
