@@ -56,7 +56,3 @@ cargo run --release
 [4]: https://bevyengine.org/
 
 - [Bevy][4]
-
-[5]: https://particle-life.com/
-
-- [Particle-life][5]
