@@ -281,10 +281,10 @@ fn main() {
             Update,
             (
                 tick_tiles,
-                update_tile_visual_system.after(tick_tiles),
-                animate_items_system,
+                update_tile_visuals.after(tick_tiles),
+                animate_items.after(update_tile_visuals),
                 manage_tiles,
-                camera_movement,
+                move_camera,
             ),
         )
         .run();
@@ -735,7 +735,7 @@ fn sort_moves_topologically(actions: Vec<Action>) -> Vec<Action> {
     sorted
 }
 
-fn update_tile_visual_system(
+fn update_tile_visuals(
     world: Res<WorldRes>,
     mut parent_query: Query<(Entity, &TileSprite, &mut Transform, &mut Sprite)>,
     children_query: Query<&Children, With<TileSprite>>,
@@ -789,6 +789,12 @@ fn update_tile_visual_system(
                         if let Ok((mut child_sprite, mut child_transform)) =
                             child_sprite_query.get_mut(child)
                         {
+                            // Update visibility based on animation state
+                            if animated_positions.contains(&tile_sprite.pos) {
+                                child_sprite.color = Color::NONE;
+                            } else {
+                                child_sprite.color = Color::WHITE;
+                            }
                             child_transform.translation = Vec3::new(0.0, 0.0, 1.0);
                             child_transform.rotation = match conveyor.direction {
                                 Direction::Up => Quat::IDENTITY,
@@ -803,13 +809,6 @@ fn update_tile_visual_system(
                                 Item::Stone => asset_server.load("textures/items/stone.png"),
                                 Item::Product => asset_server.load("textures/items/product.png"),
                             };
-
-                            // Update visibility based on animation state
-                            if animated_positions.contains(&tile_sprite.pos) {
-                                child_sprite.color = Color::NONE;
-                            } else {
-                                child_sprite.color = Color::WHITE;
-                            }
                         }
                     }
                 }
@@ -881,7 +880,7 @@ fn update_tile_visual_system(
     }
 }
 
-fn animate_items_system(
+fn animate_items(
     time: Res<Time>,
     mut commands: Commands,
     mut query: Query<(Entity, &mut ItemAnimation, &mut Transform)>,
@@ -1158,7 +1157,7 @@ fn manage_tiles(
     }
 }
 
-fn camera_movement(
+fn move_camera(
     mut camera: Query<&mut Transform, With<Camera2d>>,
     keyboard_input: Res<ButtonInput<KeyCode>>,
 ) {
