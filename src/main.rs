@@ -1,4 +1,9 @@
-use bevy::{color::palettes::css, input::mouse::MouseWheel, prelude::*, window::PrimaryWindow};
+use bevy::{
+    color::palettes::css,
+    input::mouse::MouseWheel,
+    prelude::*,
+    window::{PresentMode, PrimaryWindow, WindowTheme},
+};
 use bevy_embedded_assets::{EmbeddedAssetPlugin, PluginMode};
 use bincode::{Decode, Encode, config};
 use flate2::{Compression, read::DeflateDecoder, write::DeflateEncoder};
@@ -479,7 +484,20 @@ fn recipe_for(factory_type: FactoryType) -> Recipe {
 fn main() {
     App::new()
         .add_plugins((
-            DefaultPlugins,
+            DefaultPlugins.set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "Factory Factory".into(),
+                    name: Some("factoyfactory.app".into()),
+                    resolution: (1280.0, 720.0).into(),
+                    // Tells Wasm to resize the window according to the available canvas
+                    fit_canvas_to_parent: true,
+                    // Tells Wasm not to override default event handling, like F5, Ctrl+R etc.
+                    prevent_default_event_handling: false,
+
+                    ..default()
+                }),
+                ..default()
+            }),
             EmbeddedAssetPlugin {
                 mode: PluginMode::AutoLoad,
             },
