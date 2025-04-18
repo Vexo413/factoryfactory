@@ -103,7 +103,7 @@ impl Position {
         Self { x, y }
     }
 
-    fn to_key(&self) -> u64 {
+    fn get_as_key(&self) -> u64 {
         ((self.x as u64) & 0xFFFFFFFF) | (((self.y as u64) & 0xFFFFFFFF) << 32)
     }
 
@@ -179,7 +179,7 @@ impl WorldRes {
                                 item: Item::None,
                             }
                         };
-                    (pos.to_key(), (serializable_tile, *id))
+                    (pos.get_as_key(), (serializable_tile, *id))
                 })
                 .collect(),
             resources: self.resources.clone(),
@@ -293,7 +293,7 @@ impl Default for WorldRes {
         resources.insert(1, 10);
         resources.insert(2, 1);
 
-        return world.unwrap_or(WorldRes {
+        world.unwrap_or(WorldRes {
             tiles: HashMap::new(),
             terrain: HashMap::new(),
             resources,
@@ -301,7 +301,7 @@ impl Default for WorldRes {
             tick_timer: Timer::from_seconds(TICK_LENGTH, TimerMode::Repeating),
             tick_count: 0,
             actions: Vec::new(),
-        });
+        })
     }
 }
 
@@ -497,7 +497,7 @@ fn main() {
 }
 
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut world: ResMut<WorldRes>) {
-    commands.spawn(Camera2d::default());
+    commands.spawn(Camera2d);
 
     if world.terrain.is_empty() {
         let perlin = Perlin::new(world.world_seed);
@@ -699,9 +699,9 @@ fn tick_tiles(
         for action in &world.actions {
             match action {
                 Action::Move(start, end, item) => {
-                    if let Some(tile) = world.tiles.get(&end) {
+                    if let Some(tile) = world.tiles.get(end) {
                         if let Some(end_conveyor) = tile.0.as_any().downcast_ref::<Conveyor>() {
-                            if end_conveyor.item == Item::None || moved.contains(&end) {
+                            if end_conveyor.item == Item::None || moved.contains(end) {
                                 moved.push(*start);
 
                                 let start_pos = Vec3::new(
@@ -734,8 +734,8 @@ fn tick_tiles(
                                 ));
                             }
                         } else if let Some(factory) = tile.0.as_any().downcast_ref::<Factory>() {
-                            if factory.capacity.get(&item).unwrap_or(&0_u32)
-                                > factory.inventory.get(&item).unwrap_or(&0_u32)
+                            if factory.capacity.get(item).unwrap_or(&0_u32)
+                                > factory.inventory.get(item).unwrap_or(&0_u32)
                             {
                                 moved.push(*start);
 
@@ -774,7 +774,7 @@ fn tick_tiles(
                 Action::Produce(position) => {
                     if let Some(factory) = world
                         .tiles
-                        .get(&position)
+                        .get(position)
                         .unwrap()
                         .0
                         .as_any()
@@ -842,7 +842,7 @@ fn tick_tiles(
                         }
                     } else if let Some(extractor) = world
                         .tiles
-                        .get(&position)
+                        .get(position)
                         .unwrap()
                         .0
                         .as_any()
@@ -949,9 +949,9 @@ fn sort_moves_topologically(actions: Vec<Action>) -> Vec<Action> {
         }
     }
 
-    for i in 0..actions.len() {
+    for (i, action) in actions.iter().enumerate() {
         if !visited.contains(&i) {
-            sorted.push(actions[i].clone());
+            sorted.push(action.clone());
         }
     }
 
@@ -1212,7 +1212,6 @@ fn manage_tiles(
                         Direction::Left => Quat::from_rotation_z(FRAC_PI_2),
                         Direction::Right => Quat::from_rotation_z(-FRAC_PI_2),
                     },
-                    ..Default::default()
                 },
             ))
             .id();
