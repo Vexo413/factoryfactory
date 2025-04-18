@@ -626,55 +626,46 @@ fn tick_tiles(
                     }
                 }
                 Action::Produce(position) => {
-                    if let Some(factory) = world
-                        .tiles
-                        .get_mut(&position)
-                        .unwrap()
-                        .0
-                        .as_any_mut()
-                        .downcast_mut::<Factory>()
-                    {
-                        if let Some((produced_item, _produced_qty)) = factory.produce() {
-                            let mut end_position = factory.position;
-                            match factory.direction {
+                    if let Some(tile) = world.tiles.get_mut(&position) {
+                        if let Some(factory) = tile.0.as_any_mut().downcast_mut::<Factory>() {
+                            if let Some((produced_item, _produced_qty)) = factory.produce() {
+                                let mut end_position = factory.position;
+                                match factory.direction {
+                                    Direction::Up => end_position.y += 1,
+                                    Direction::Down => end_position.y -= 1,
+                                    Direction::Left => end_position.x -= 1,
+                                    Direction::Right => end_position.x += 1,
+                                }
+
+                                if let Some(tile) = world.tiles.get_mut(&end_position) {
+                                    if let Some(conveyor) =
+                                        tile.0.as_any_mut().downcast_mut::<Conveyor>()
+                                    {
+                                        if conveyor.item == Item::None {
+                                            conveyor.item = produced_item;
+                                        }
+                                    }
+                                }
+                            }
+                        } else if let Some(extractor) =
+                            tile.0.as_any_mut().downcast_mut::<Extractor>()
+                        {
+                            let mut end_position = extractor.position;
+                            let item = extractor.spawn_item;
+                            match extractor.direction {
                                 Direction::Up => end_position.y += 1,
                                 Direction::Down => end_position.y -= 1,
                                 Direction::Left => end_position.x -= 1,
                                 Direction::Right => end_position.x += 1,
                             }
 
-                            if let Some(tile) = world.tiles.get_mut(&end_position) {
+                            if let Some(tiles) = world.tiles.get_mut(&end_position) {
                                 if let Some(conveyor) =
-                                    tile.0.as_any_mut().downcast_mut::<Conveyor>()
+                                    tiles.0.as_any_mut().downcast_mut::<Conveyor>()
                                 {
                                     if conveyor.item == Item::None {
-                                        conveyor.item = produced_item;
+                                        conveyor.item = item;
                                     }
-                                }
-                            }
-                        }
-                    } else if let Some(extractor) = world
-                        .tiles
-                        .get_mut(&position)
-                        .unwrap()
-                        .0
-                        .as_any_mut()
-                        .downcast_mut::<Extractor>()
-                    {
-                        let mut end_position = extractor.position;
-                        let item = extractor.spawn_item;
-                        match extractor.direction {
-                            Direction::Up => end_position.y += 1,
-                            Direction::Down => end_position.y -= 1,
-                            Direction::Left => end_position.x -= 1,
-                            Direction::Right => end_position.x += 1,
-                        }
-
-                        if let Some(tiles) = world.tiles.get_mut(&end_position) {
-                            if let Some(conveyor) = tiles.0.as_any_mut().downcast_mut::<Conveyor>()
-                            {
-                                if conveyor.item == Item::None {
-                                    conveyor.item = item;
                                 }
                             }
                         }
