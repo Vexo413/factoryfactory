@@ -342,10 +342,8 @@ impl Tile for Conveyor {
             Direction::Right => end_position.x += 1,
         }
 
-        if world.tiles.get(&end_position).is_some() {
-            if self.item != Item::None {
-                return Action::Move(start_position, end_position, self.item);
-            }
+        if world.tiles.contains_key(&end_position) && self.item != Item::None {
+            return Action::Move(start_position, end_position, self.item);
         }
 
         Action::None
