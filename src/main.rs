@@ -63,6 +63,7 @@ struct SerializableWorld {
 enum TerrainTileType {
     RawFlextoriumDeposit,
     RawRigtoriumDeposit,
+    ElectrineDeposit,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Encode, Decode, PartialEq, Eq)]
@@ -75,17 +76,46 @@ enum Direction {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Encode, Decode)]
 enum FactoryType {
-    Assembler,
+    RigtoriumSmelter,
+    FlextoriumFacbricator,
 }
 
 impl FactoryType {
     fn capacity(&self) -> HashMap<Item, u32> {
         match self {
-            FactoryType::Assembler => {
+            FactoryType::RigtoriumSmelter => {
                 let mut hashmap = HashMap::new();
-                hashmap.insert(Item::RawRigtorium, 5);
-                hashmap.insert(Item::RawFlextorium, 5);
+                hashmap.insert(Item::RawRigtorium, 2);
+                hashmap.insert(Item::Electrine, 2);
                 hashmap
+            }
+            FactoryType::FlextoriumFacbricator => {
+                let mut hashmap = HashMap::new();
+                hashmap.insert(Item::RawFlextorium, 2);
+                hashmap.insert(Item::Electrine, 2);
+                hashmap
+            }
+        }
+    }
+    fn recipe(&self) -> Recipe {
+        match self {
+            FactoryType::RigtoriumSmelter => {
+                let mut inputs = HashMap::new();
+                inputs.insert(Item::RawRigtorium, 1);
+                inputs.insert(Item::Electrine, 1);
+                Recipe {
+                    inputs,
+                    output: Item::Rigtorium,
+                }
+            }
+            FactoryType::FlextoriumFacbricator => {
+                let mut inputs = HashMap::new();
+                inputs.insert(Item::RawFlextorium, 1);
+                inputs.insert(Item::Electrine, 1);
+                Recipe {
+                    inputs,
+                    output: Item::Flextorium,
+                }
             }
         }
     }
@@ -95,19 +125,24 @@ impl FactoryType {
 enum Action {
     Move(Position, Position, Item),
     Produce(Position),
+    Teleport(Position, Item),
 }
 
 #[derive(PartialEq, Eq, Clone, Hash, Debug, Copy, Deserialize, Serialize, Encode, Decode)]
 enum Item {
     RawFlextorium,
     RawRigtorium,
+    Flextorium,
+    Rigtorium,
+    Electrine,
     Product,
+    Conveyor,
 }
 
 #[derive(Debug, Clone)]
 struct Recipe {
     inputs: HashMap<Item, u32>,
-    output: (Item, u32),
+    output: Item,
 }
 
 #[derive(
@@ -135,17 +170,17 @@ impl Position {
 }
 
 #[derive(Resource)]
-struct ConveyorPlacer {
+struct Placer {
     direction: Direction,
     tile_type: u32,
     preview_entity: Option<Entity>,
 }
 
-impl Default for ConveyorPlacer {
+impl Default for Placer {
     fn default() -> Self {
         Self {
             direction: Direction::Up,
-            tile_type: 1,
+            tile_type: 101,
             preview_entity: None,
         }
     }
@@ -287,10 +322,12 @@ impl WorldRes {
         for x in -20..=20 {
             for y in -20..=20 {
                 let noise_val = perlin.get([x as f64 * noise_scale, y as f64 * noise_scale]);
-                let terrain_type = if noise_val > 0.0 {
+                let terrain_type = if noise_val > 0.07 {
                     TerrainTileType::RawFlextoriumDeposit
-                } else {
+                } else if noise_val > 0.01 {
                     TerrainTileType::RawRigtoriumDeposit
+                } else {
+                    TerrainTileType::ElectrineDeposit
                 };
                 terrain.insert(Position::new(x, y), terrain_type);
             }
@@ -312,8 +349,14 @@ impl Default for WorldRes {
     fn default() -> Self {
         let world = WorldRes::load("savegame.ff");
         let mut resources = HashMap::new();
-        resources.insert(1, 10);
-        resources.insert(2, 1);
+        resources.insert(101, 40);
+        resources.insert(201, 10);
+        resources.insert(202, 10);
+        resources.insert(301, 10);
+        resources.insert(302, 10);
+        resources.insert(303, 10);
+        resources.insert(401, 10);
+        resources.insert(501, 10);
 
         world.unwrap_or(WorldRes {
             tiles: HashMap::new(),
@@ -386,24 +429,28 @@ impl Tile for Conveyor {
 enum ExtractorType {
     RawFlextorium,
     RawRigtorium,
+    Electrine,
 }
 impl ExtractorType {
     fn interval(&self) -> i32 {
         match self {
             ExtractorType::RawRigtorium => 5,
             ExtractorType::RawFlextorium => 5,
+            ExtractorType::Electrine => 2,
         }
     }
     fn terrain(&self) -> TerrainTileType {
         match self {
             ExtractorType::RawRigtorium => TerrainTileType::RawRigtoriumDeposit,
             ExtractorType::RawFlextorium => TerrainTileType::RawFlextoriumDeposit,
+            ExtractorType::Electrine => TerrainTileType::ElectrineDeposit,
         }
     }
     fn spawn_item(&self) -> Option<Item> {
         match self {
             ExtractorType::RawRigtorium => Some(Item::RawRigtorium),
             ExtractorType::RawFlextorium => Some(Item::RawFlextorium),
+            ExtractorType::Electrine => Some(Item::Electrine),
         }
     }
 }
@@ -448,15 +495,15 @@ struct Factory {
 
 impl Factory {
     fn can_produce(&self) -> bool {
-        let recipe = recipe_for(self.factory_type);
+        let recipe = self.factory_type.recipe();
         recipe
             .inputs
             .iter()
             .all(|(item, &qty_required)| self.inventory.get(item).unwrap_or(&0) >= &qty_required)
     }
 
-    fn produce(&mut self) -> Option<(Item, u32)> {
-        let recipe = recipe_for(self.factory_type);
+    fn produce(&mut self) -> Option<Item> {
+        let recipe = self.factory_type.recipe();
         if self.can_produce() {
             for (item, &qty_required) in recipe.inputs.iter() {
                 if let Some(qty) = self.inventory.get_mut(item) {
@@ -469,8 +516,8 @@ impl Factory {
             None
         }
     }
-    fn get_produce_item(&self) -> Option<(Item, u32)> {
-        let recipe = recipe_for(self.factory_type);
+    fn get_produce_item(&self) -> Option<Item> {
+        let recipe = self.factory_type.recipe();
         if self.can_produce() {
             Some(recipe.output)
         } else {
@@ -506,20 +553,6 @@ impl Tile for Factory {
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
-    }
-}
-
-fn recipe_for(factory_type: FactoryType) -> Recipe {
-    match factory_type {
-        FactoryType::Assembler => {
-            let mut inputs = HashMap::new();
-            inputs.insert(Item::RawFlextorium, 1);
-            inputs.insert(Item::RawRigtorium, 1);
-            Recipe {
-                inputs,
-                output: (Item::Product, 1),
-            }
-        }
     }
 }
 
@@ -594,6 +627,29 @@ impl Tile for Storage {
     }
 }
 
+#[derive(Debug)]
+struct Portal {
+    position: Position,
+    item: Option<Item>,
+}
+impl Tile for Portal {
+    fn tick(&self, world: &WorldRes) -> Option<Action> {
+        if let Some(item) = self.item {
+            return Some(Action::Teleport(self.position, item));
+        }
+
+        None
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
 fn main() {
     App::new()
         .add_plugins((
@@ -616,7 +672,7 @@ fn main() {
             },
         ))
         .insert_resource(WorldRes::default())
-        .insert_resource(ConveyorPlacer::default())
+        .insert_resource(Placer::default())
         .add_systems(Startup, setup)
         .add_systems(
             Update,
@@ -641,10 +697,12 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut world: ResM
         for x in -20..=20 {
             for y in -20..=20 {
                 let noise_val = perlin.get([x as f64 * noise_scale, y as f64 * noise_scale]);
-                let terrain_type = if noise_val > 0.0 {
+                let terrain_type = if noise_val > 0.07 {
                     TerrainTileType::RawFlextoriumDeposit
-                } else {
+                } else if noise_val > 0.01 {
                     TerrainTileType::RawRigtoriumDeposit
+                } else {
+                    TerrainTileType::ElectrineDeposit
                 };
                 world.terrain.insert(Position::new(x, y), terrain_type);
             }
@@ -655,6 +713,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut world: ResM
         let texture_path = match terrain {
             TerrainTileType::RawFlextoriumDeposit => "embedded://textures/terrain/flextorium.png",
             TerrainTileType::RawRigtoriumDeposit => "embedded://textures/terrain/rigtorium.png",
+            TerrainTileType::ElectrineDeposit => "embedded://textures/terrain/electrine.png",
         };
         commands.spawn((
             Sprite::from_image(asset_server.load(texture_path)),
@@ -675,7 +734,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut world: ResM
                     direction: Direction::Right,
                     extractor_type: ExtractorType::RawRigtorium,
                 }),
-                3,
+                301,
             ),
         );
         world.tiles.insert(
@@ -686,7 +745,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut world: ResM
                     direction: Direction::Left,
                     extractor_type: ExtractorType::RawFlextorium,
                 }),
-                3,
+                302,
             ),
         );
     }
@@ -758,7 +817,7 @@ fn tick_tiles(
                 Action::Produce(position) => {
                     if let Some(tile) = world.tiles.get_mut(&position) {
                         if let Some(factory) = tile.0.as_any_mut().downcast_mut::<Factory>() {
-                            if let Some((produced_item, _produced_qty)) = factory.produce() {
+                            if let Some(produced_item) = factory.produce() {
                                 let mut end_position = factory.position;
                                 match factory.direction {
                                     Direction::Up => end_position.y += 1,
@@ -797,6 +856,17 @@ fn tick_tiles(
                                         conveyor.item = item;
                                     }
                                 }
+                            }
+                        }
+                    }
+                }
+                Action::Teleport(position, item) => {
+                    if let Some(tiles) = world.tiles.get_mut(&position) {
+                        if let Some(portal) = tiles.0.as_any_mut().downcast_mut::<Portal>() {
+                            portal.item = None;
+                            match item {
+                                Item::Conveyor => *world.resources.entry(1).or_insert(0) += 1,
+                                _ => {}
                             }
                         }
                     }
@@ -848,7 +918,12 @@ fn tick_tiles(
                                         Item::RawRigtorium => {
                                             "embedded://textures/items/raw_rigtorium.png"
                                         }
+                                        Item::Electrine => {
+                                            "embedded://textures/items/electrine.png"
+                                        }
                                         Item::Product => "embedded://textures/items/product.png",
+
+                                        _ => "embedded://textures/items/product.png",
                                     })),
                                     Transform {
                                         translation: start_pos,
@@ -886,7 +961,12 @@ fn tick_tiles(
                                         Item::RawRigtorium => {
                                             "embedded://textures/items/raw_rigtorium.png"
                                         }
+                                        Item::Electrine => {
+                                            "embedded://textures/items/electrine.png"
+                                        }
                                         Item::Product => "embedded://textures/items/product.png",
+
+                                        _ => "embedded://textures/items/product.png",
                                     })),
                                     Transform {
                                         translation: start_pos,
@@ -901,8 +981,7 @@ fn tick_tiles(
                 Action::Produce(position) => {
                     if let Some(tile) = world.tiles.get(position) {
                         if let Some(factory) = tile.0.as_any().downcast_ref::<Factory>() {
-                            if let Some((produced_item, _produced_qty)) = factory.get_produce_item()
-                            {
+                            if let Some(produced_item) = factory.get_produce_item() {
                                 let mut end_position = factory.position;
                                 match factory.direction {
                                     Direction::Up => end_position.y += 1,
@@ -947,6 +1026,9 @@ fn tick_tiles(
                                                             "embedded://textures/items/raw_rigtorium.png"
                                                         }
                                                         Item::Product => {
+                                                            "embedded://textures/items/product.png"
+                                                        }
+                                                        _ => {
                                                             "embedded://textures/items/product.png"
                                                         }
                                                     },
@@ -1006,6 +1088,7 @@ fn tick_tiles(
                                                 Some(Item::Product) => {
                                                     "embedded://textures/items/product.png"
                                                 }
+                                                _ => "embedded://textures/items/product.png",
                                             })),
                                             Transform {
                                                 translation: start_pos,
@@ -1019,6 +1102,7 @@ fn tick_tiles(
                         }
                     }
                 }
+                Action::Teleport(_, _) => {}
             }
         }
         if let Err(err) = world.save("savegame.ff") {
@@ -1158,6 +1242,7 @@ fn update_tile_visuals(
                                 Some(Item::Product) => {
                                     asset_server.load("embedded://textures/items/product.png")
                                 }
+                                _ => asset_server.load("embedded://textures/items/product.png"),
                             };
                         }
                     }
@@ -1176,7 +1261,10 @@ fn update_tile_visuals(
                         .unwrap()
                         .factory_type
                     {
-                        FactoryType::Assembler => "embedded://textures/tiles/assembler.png",
+                        FactoryType::RigtoriumSmelter => "embedded://textures/tiles/assembler.png",
+                        FactoryType::FlextoriumFacbricator => {
+                            "embedded://textures/tiles/assembler.png"
+                        }
                     },
                 );
                 transform.rotation = match factory.direction {
@@ -1205,6 +1293,9 @@ fn update_tile_visuals(
                     }
                     ExtractorType::RawFlextorium => {
                         "embedded://textures/tiles/extractors/flextorium.png"
+                    }
+                    ExtractorType::Electrine => {
+                        "embedded://textures/tiles/extractors/electrine.png"
                     }
                 });
 
@@ -1277,17 +1368,13 @@ fn is_conveyor_pointing_to(
     if let Some(tile) = world.tiles.get(&from_pos) {
         if let Some(conveyor) = tile.0.as_any().downcast_ref::<Conveyor>() {
             return conveyor.direction == pointing_direction;
+        } else if let Some(factory) = tile.0.as_any().downcast_ref::<Factory>() {
+            return factory.direction == pointing_direction;
+        } else if let Some(extractor) = tile.0.as_any().downcast_ref::<Extractor>() {
+            return extractor.direction == pointing_direction;
         }
     }
     false
-}
-fn opposite_direction(dir: Direction) -> Direction {
-    match dir {
-        Direction::Up => Direction::Down,
-        Direction::Down => Direction::Up,
-        Direction::Left => Direction::Right,
-        Direction::Right => Direction::Left,
-    }
 }
 
 fn rotate_direction_clockwise(dir: Direction) -> Direction {
@@ -1330,19 +1417,31 @@ fn manage_tiles(
     mut mouse_wheel_events: EventReader<MouseWheel>,
     mouse_button_input: Res<ButtonInput<MouseButton>>,
     keyboard_input: Res<ButtonInput<KeyCode>>,
-    mut placer: ResMut<ConveyorPlacer>,
+    mut placer: ResMut<Placer>,
     mut world: ResMut<WorldRes>,
     asset_server: Res<AssetServer>,
     mut commands: Commands,
 ) {
     if keyboard_input.pressed(KeyCode::Digit1) {
-        placer.tile_type = 1;
+        placer.tile_type = 101;
     }
     if keyboard_input.pressed(KeyCode::Digit2) {
-        placer.tile_type = 2;
+        placer.tile_type = 201;
     }
     if keyboard_input.pressed(KeyCode::Digit3) {
-        placer.tile_type = 3;
+        placer.tile_type = 301;
+    }
+    if keyboard_input.pressed(KeyCode::Digit4) {
+        placer.tile_type = 302;
+    }
+    if keyboard_input.pressed(KeyCode::Digit5) {
+        placer.tile_type = 303;
+    }
+    if keyboard_input.pressed(KeyCode::Digit6) {
+        placer.tile_type = 403;
+    }
+    if keyboard_input.pressed(KeyCode::Digit0) {
+        placer.tile_type = 202;
     }
 
     for event in mouse_wheel_events.read() {
@@ -1360,7 +1459,9 @@ fn manage_tiles(
         };
     }
 
-    let window = windows.single();
+    let Ok(window) = windows.get_single() else {
+        return;
+    };
     if let Some(screen_pos) = window.cursor_position() {
         let (camera, camera_transform) = camera_query.single();
         let window_size = Vec2::new(window.width(), window.height());
@@ -1381,9 +1482,14 @@ fn manage_tiles(
 
         let texture_path = match placer.tile_type {
             0 => "embedded://textures/tiles/none.png",
-            1 => "embedded://textures/tiles/conveyors/back.png",
-            2 => "embedded://textures/tiles/assembler.png",
-            3 => "embedded://textures/tiles/extractor.png",
+            101 => "embedded://textures/tiles/conveyors/back.png",
+            201 => "embedded://textures/tiles/assembler.png",
+            202 => "embedded://textures/tiles/assembler.png",
+            301 => "embedded://textures/tiles/extractors/rigtorium.png",
+            302 => "embedded://textures/tiles/extractors/flextorium.png",
+            303 => "embedded://textures/tiles/extractors/electrine.png",
+            401 => "embedded://textures/tiles/portal.png",
+            501 => "embedded://textures/tiles/storage.png",
             _ => "embedded://textures/tiles/conveyors/back.png",
         };
 
@@ -1439,35 +1545,81 @@ fn manage_tiles(
                     *world.resources.entry(tile_type).or_insert(0) -= 1;
 
                     let new_tile = match tile_type {
-                        1 => (
+                        101 => (
                             Box::new(Conveyor {
                                 position: pos,
                                 direction,
                                 item: None,
                             }) as Box<dyn Tile>,
-                            1,
+                            101,
                         ),
-                        2 => {
+                        201 => {
                             let mut hashmap = HashMap::new();
                             hashmap.insert(Item::RawFlextorium, 5);
                             hashmap.insert(Item::RawRigtorium, 5);
                             (
                                 Box::new(Factory {
-                                    factory_type: FactoryType::Assembler,
+                                    factory_type: FactoryType::RigtoriumSmelter,
                                     position: pos,
                                     direction,
                                     inventory: HashMap::new(),
                                 }) as Box<dyn Tile>,
-                                2,
+                                201,
                             )
                         }
-                        3 => (
+                        202 => {
+                            let mut hashmap = HashMap::new();
+                            hashmap.insert(Item::RawFlextorium, 5);
+                            hashmap.insert(Item::RawRigtorium, 5);
+                            (
+                                Box::new(Factory {
+                                    factory_type: FactoryType::FlextoriumFacbricator,
+                                    position: pos,
+                                    direction,
+                                    inventory: HashMap::new(),
+                                }) as Box<dyn Tile>,
+                                202,
+                            )
+                        }
+                        301 => (
                             Box::new(Extractor {
                                 position: pos,
                                 direction,
                                 extractor_type: ExtractorType::RawRigtorium,
                             }) as Box<dyn Tile>,
-                            3,
+                            301,
+                        ),
+                        302 => (
+                            Box::new(Extractor {
+                                position: pos,
+                                direction,
+                                extractor_type: ExtractorType::RawFlextorium,
+                            }) as Box<dyn Tile>,
+                            302,
+                        ),
+                        303 => (
+                            Box::new(Extractor {
+                                position: pos,
+                                direction,
+                                extractor_type: ExtractorType::Electrine,
+                            }) as Box<dyn Tile>,
+                            303,
+                        ),
+                        401 => (
+                            Box::new(Portal {
+                                position: pos,
+                                item: None,
+                            }) as Box<dyn Tile>,
+                            401,
+                        ),
+                        501 => (
+                            Box::new(Storage {
+                                position: pos,
+                                direction,
+                                inventory: HashMap::new(),
+                                storage_type: StorageType::SmallVault,
+                            }) as Box<dyn Tile>,
+                            501,
                         ),
                         _ => (
                             Box::new(Conveyor {
@@ -1475,7 +1627,7 @@ fn manage_tiles(
                                 direction,
                                 item: None,
                             }) as Box<dyn Tile>,
-                            1,
+                            101,
                         ),
                     };
 
@@ -1488,35 +1640,81 @@ fn manage_tiles(
                     *world.resources.entry(tile_type).or_insert(0) -= 1;
 
                     let new_tile = match tile_type {
-                        1 => (
+                        101 => (
                             Box::new(Conveyor {
                                 position: pos,
                                 direction,
                                 item: None,
                             }) as Box<dyn Tile>,
-                            1,
+                            101,
                         ),
-                        2 => {
+                        201 => {
                             let mut hashmap = HashMap::new();
                             hashmap.insert(Item::RawFlextorium, 5);
                             hashmap.insert(Item::RawRigtorium, 5);
                             (
                                 Box::new(Factory {
-                                    factory_type: FactoryType::Assembler,
+                                    factory_type: FactoryType::RigtoriumSmelter,
                                     position: pos,
                                     direction,
                                     inventory: HashMap::new(),
                                 }) as Box<dyn Tile>,
-                                2,
+                                201,
                             )
                         }
-                        3 => (
+                        202 => {
+                            let mut hashmap = HashMap::new();
+                            hashmap.insert(Item::RawFlextorium, 5);
+                            hashmap.insert(Item::RawRigtorium, 5);
+                            (
+                                Box::new(Factory {
+                                    factory_type: FactoryType::FlextoriumFacbricator,
+                                    position: pos,
+                                    direction,
+                                    inventory: HashMap::new(),
+                                }) as Box<dyn Tile>,
+                                202,
+                            )
+                        }
+                        301 => (
                             Box::new(Extractor {
                                 position: pos,
                                 direction,
                                 extractor_type: ExtractorType::RawRigtorium,
                             }) as Box<dyn Tile>,
-                            3,
+                            301,
+                        ),
+                        302 => (
+                            Box::new(Extractor {
+                                position: pos,
+                                direction,
+                                extractor_type: ExtractorType::RawFlextorium,
+                            }) as Box<dyn Tile>,
+                            302,
+                        ),
+                        303 => (
+                            Box::new(Extractor {
+                                position: pos,
+                                direction,
+                                extractor_type: ExtractorType::Electrine,
+                            }) as Box<dyn Tile>,
+                            303,
+                        ),
+                        401 => (
+                            Box::new(Portal {
+                                position: pos,
+                                item: None,
+                            }) as Box<dyn Tile>,
+                            401,
+                        ),
+                        501 => (
+                            Box::new(Storage {
+                                position: pos,
+                                direction,
+                                inventory: HashMap::new(),
+                                storage_type: StorageType::SmallVault,
+                            }) as Box<dyn Tile>,
+                            501,
                         ),
                         _ => (
                             Box::new(Conveyor {
@@ -1524,7 +1722,7 @@ fn manage_tiles(
                                 direction,
                                 item: None,
                             }) as Box<dyn Tile>,
-                            1,
+                            101,
                         ),
                     };
 
