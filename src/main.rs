@@ -78,7 +78,6 @@ enum FactoryType {
 enum Action {
     Move(Position, Position, Item),
     Produce(Position),
-    None,
 }
 
 #[derive(PartialEq, Eq, Clone, Hash, Debug, Copy, Deserialize, Serialize, Encode, Decode)]
@@ -323,7 +322,7 @@ struct ItemAnimation {
 }
 
 trait Tile: Send + Sync + Debug {
-    fn tick(&self, tiles: &WorldRes) -> Action;
+    fn tick(&self, tiles: &WorldRes) -> Option<Action>;
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
@@ -336,7 +335,7 @@ struct Conveyor {
 }
 
 impl Tile for Conveyor {
-    fn tick(&self, world: &WorldRes) -> Action {
+    fn tick(&self, world: &WorldRes) -> Option<Action> {
         let start_position = self.position;
         let mut end_position = self.position;
 
@@ -348,10 +347,10 @@ impl Tile for Conveyor {
         }
 
         if world.tiles.contains_key(&end_position) && self.item != Item::None {
-            return Action::Move(start_position, end_position, self.item);
+            return Some(Action::Move(start_position, end_position, self.item));
         }
 
-        Action::None
+        None
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -373,7 +372,7 @@ struct Extractor {
 }
 
 impl Tile for Extractor {
-    fn tick(&self, world: &WorldRes) -> Action {
+    fn tick(&self, world: &WorldRes) -> Option<Action> {
         if world.tick_count % self.interval == 0
             && *world
                 .terrain
@@ -381,9 +380,9 @@ impl Tile for Extractor {
                 .unwrap_or(&TerrainTileType::Dirt)
                 == self.required_terrain
         {
-            return Action::Produce(self.position);
+            return Some(Action::Produce(self.position));
         }
-        Action::None
+        None
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -438,7 +437,7 @@ impl Factory {
 }
 
 impl Tile for Factory {
-    fn tick(&self, world: &WorldRes) -> Action {
+    fn tick(&self, world: &WorldRes) -> Option<Action> {
         let mut end_position = self.position;
 
         match self.direction {
@@ -450,12 +449,12 @@ impl Tile for Factory {
         if let Some(tile) = world.tiles.get(&end_position) {
             if let Some(conveyor) = tile.0.as_any().downcast_ref::<Conveyor>() {
                 if self.can_produce() && conveyor.item == Item::None {
-                    return Action::Produce(self.position);
+                    return Some(Action::Produce(self.position));
                 }
             }
         }
 
-        Action::None
+        None
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -690,15 +689,15 @@ fn tick_tiles(
                         }
                     }
                 }
-                Action::None => {}
             }
         }
 
         let mut next = Vec::new();
 
         for tile in world.tiles.values() {
-            let action = tile.0.tick(&world);
-            next.push(action);
+            if let Some(action) = tile.0.tick(&world) {
+                next.push(action);
+            }
         }
 
         world.actions = sort_moves_topologically(next);
@@ -905,8 +904,6 @@ fn tick_tiles(
                         }
                     }
                 }
-
-                _ => {}
             }
         }
         if let Err(err) = world.save("savegame.ff") {
