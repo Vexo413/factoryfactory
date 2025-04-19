@@ -30,12 +30,12 @@ enum SerializableTile {
     Conveyor {
         position: Position,
         direction: Direction,
-        item: Item,
+        item: Option<Item>,
     },
     Extractor {
         position: Position,
         direction: Direction,
-        spawn_item: Item,
+        spawn_item: Option<Item>,
         interval: i32,
         required_terrain: TerrainTileType,
     },
@@ -82,7 +82,6 @@ enum Action {
 
 #[derive(PartialEq, Eq, Clone, Hash, Debug, Copy, Deserialize, Serialize, Encode, Decode)]
 enum Item {
-    None,
     Wood,
     Stone,
     Product,
@@ -180,7 +179,7 @@ impl WorldRes {
                             SerializableTile::Conveyor {
                                 position: *pos,
                                 direction: Direction::Up,
-                                item: Item::None,
+                                item: None,
                             }
                         };
                     (pos.get_as_key(), (serializable_tile, *id))
@@ -331,7 +330,7 @@ trait Tile: Send + Sync + Debug {
 struct Conveyor {
     position: Position,
     direction: Direction,
-    item: Item,
+    item: Option<Item>,
 }
 
 impl Tile for Conveyor {
@@ -346,8 +345,10 @@ impl Tile for Conveyor {
             Direction::Right => end_position.x += 1,
         }
 
-        if world.tiles.contains_key(&end_position) && self.item != Item::None {
-            return Some(Action::Move(start_position, end_position, self.item));
+        if world.tiles.contains_key(&end_position) {
+            if let Some(item) = self.item {
+                return Some(Action::Move(start_position, end_position, item));
+            }
         }
 
         None
@@ -366,7 +367,7 @@ impl Tile for Conveyor {
 struct Extractor {
     position: Position,
     direction: Direction,
-    spawn_item: Item,
+    spawn_item: Option<Item>,
     interval: i32,
     required_terrain: TerrainTileType,
 }
@@ -448,7 +449,7 @@ impl Tile for Factory {
         }
         if let Some(tile) = world.tiles.get(&end_position) {
             if let Some(conveyor) = tile.0.as_any().downcast_ref::<Conveyor>() {
-                if self.can_produce() && conveyor.item == Item::None {
+                if self.can_produce() && conveyor.item.is_none() {
                     return Some(Action::Produce(self.position));
                 }
             }
@@ -559,7 +560,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut world: ResM
                 Box::new(Extractor {
                     interval: 5,
                     position: Position::new(-3, -3),
-                    spawn_item: Item::Stone,
+                    spawn_item: Some(Item::Stone),
                     direction: Direction::Right,
                     required_terrain: TerrainTileType::Dirt,
                 }),
@@ -572,7 +573,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut world: ResM
                 Box::new(Extractor {
                     interval: 5,
                     position: Position::new(3, 3),
-                    spawn_item: Item::Wood,
+                    spawn_item: Some(Item::Wood),
                     direction: Direction::Left,
                     required_terrain: TerrainTileType::Grass,
                 }),
@@ -616,13 +617,13 @@ fn tick_tiles(
                 Action::Move(start, end, item) => {
                     if let Some(tile) = world.tiles.get_mut(&end) {
                         if let Some(end_conveyor) = tile.0.as_any_mut().downcast_mut::<Conveyor>() {
-                            if end_conveyor.item == Item::None {
-                                end_conveyor.item = item;
+                            if end_conveyor.item.is_none() {
+                                end_conveyor.item = Some(item);
                                 if let Some(tile) = world.tiles.get_mut(&start) {
                                     if let Some(start_conveyor) =
                                         tile.0.as_any_mut().downcast_mut::<Conveyor>()
                                     {
-                                        start_conveyor.item = Item::None;
+                                        start_conveyor.item = None;
                                     }
                                 }
                             }
@@ -636,7 +637,7 @@ fn tick_tiles(
                                     if let Some(start_conveyor) =
                                         start_tile.0.as_any_mut().downcast_mut::<Conveyor>()
                                     {
-                                        start_conveyor.item = Item::None;
+                                        start_conveyor.item = None;
                                     }
                                 }
                             }
@@ -659,8 +660,8 @@ fn tick_tiles(
                                     if let Some(conveyor) =
                                         tile.0.as_any_mut().downcast_mut::<Conveyor>()
                                     {
-                                        if conveyor.item == Item::None {
-                                            conveyor.item = produced_item;
+                                        if conveyor.item.is_none() {
+                                            conveyor.item = Some(produced_item);
                                         }
                                     }
                                 }
@@ -681,7 +682,7 @@ fn tick_tiles(
                                 if let Some(conveyor) =
                                     tiles.0.as_any_mut().downcast_mut::<Conveyor>()
                                 {
-                                    if conveyor.item == Item::None {
+                                    if conveyor.item.is_none() {
                                         conveyor.item = item;
                                     }
                                 }
@@ -710,7 +711,7 @@ fn tick_tiles(
                 Action::Move(start, end, item) => {
                     if let Some(tile) = world.tiles.get(end) {
                         if let Some(end_conveyor) = tile.0.as_any().downcast_ref::<Conveyor>() {
-                            if end_conveyor.item == Item::None || moved.contains(end) {
+                            if end_conveyor.item.is_none() || moved.contains(end) {
                                 moved.push(*start);
 
                                 let start_pos = Vec3::new(
@@ -730,7 +731,6 @@ fn tick_tiles(
                                         timer: Timer::from_seconds(TICK_LENGTH, TimerMode::Once),
                                     },
                                     Sprite::from_image(asset_server.load(match item {
-                                        Item::None => "embedded://textures/items/none.png",
                                         Item::Wood => "embedded://textures/items/wood.png",
                                         Item::Stone => "embedded://textures/items/stone.png",
                                         Item::Product => "embedded://textures/items/product.png",
@@ -765,7 +765,6 @@ fn tick_tiles(
                                         timer: Timer::from_seconds(TICK_LENGTH, TimerMode::Once),
                                     },
                                     Sprite::from_image(asset_server.load(match item {
-                                        Item::None => "embedded://textures/items/none.png",
                                         Item::Wood => "embedded://textures/items/wood.png",
                                         Item::Stone => "embedded://textures/items/stone.png",
                                         Item::Product => "embedded://textures/items/product.png",
@@ -797,8 +796,7 @@ fn tick_tiles(
                                     if let Some(conveyor) =
                                         tile.0.as_any().downcast_ref::<Conveyor>()
                                     {
-                                        if conveyor.item == Item::None
-                                            || moved.contains(&end_position)
+                                        if conveyor.item.is_none() || moved.contains(&end_position)
                                         {
                                             moved.push(*position);
 
@@ -823,9 +821,6 @@ fn tick_tiles(
                                                 },
                                                 Sprite::from_image(asset_server.load(
                                                     match produced_item {
-                                                        Item::None => {
-                                                            "embedded://textures/items/none.png"
-                                                        }
                                                         Item::Wood => {
                                                             "embedded://textures/items/wood.png"
                                                         }
@@ -860,8 +855,7 @@ fn tick_tiles(
                             if let Some(tiles) = world.tiles.get(&end_position) {
                                 if let Some(conveyor) = tiles.0.as_any().downcast_ref::<Conveyor>()
                                 {
-                                    if conveyor.item == Item::None || moved.contains(&end_position)
-                                    {
+                                    if conveyor.item.is_none() || moved.contains(&end_position) {
                                         moved.push(*position);
                                         let start_pos = Vec3::new(
                                             position.x as f32 * TILE_SIZE,
@@ -883,12 +877,14 @@ fn tick_tiles(
                                                 ),
                                             },
                                             Sprite::from_image(asset_server.load(match item {
-                                                Item::None => "embedded://textures/items/none.png",
-                                                Item::Wood => "embedded://textures/items/wood.png",
-                                                Item::Stone => {
+                                                None => "embedded://textures/items/none.png",
+                                                Some(Item::Wood) => {
+                                                    "embedded://textures/items/wood.png"
+                                                }
+                                                Some(Item::Stone) => {
                                                     "embedded://textures/items/stone.png"
                                                 }
-                                                Item::Product => {
+                                                Some(Item::Product) => {
                                                     "embedded://textures/items/product.png"
                                                 }
                                             })),
@@ -1030,16 +1026,14 @@ fn update_tile_visuals(
                             };
 
                             child_sprite.image = match conveyor.item {
-                                Item::None => {
-                                    asset_server.load("embedded://textures/items/none.png")
-                                }
-                                Item::Wood => {
+                                None => asset_server.load("embedded://textures/items/none.png"),
+                                Some(Item::Wood) => {
                                     asset_server.load("embedded://textures/items/wood.png")
                                 }
-                                Item::Stone => {
+                                Some(Item::Stone) => {
                                     asset_server.load("embedded://textures/items/stone.png")
                                 }
-                                Item::Product => {
+                                Some(Item::Product) => {
                                     asset_server.load("embedded://textures/items/product.png")
                                 }
                             };
@@ -1097,16 +1091,14 @@ fn update_tile_visuals(
                         {
                             child_transform.translation = Vec3::new(0.0, 0.0, 1.0);
                             child_sprite.image = match extractor.spawn_item {
-                                Item::None => {
-                                    asset_server.load("embedded://textures/items/none.png")
-                                }
-                                Item::Wood => {
+                                None => asset_server.load("embedded://textures/items/none.png"),
+                                Some(Item::Wood) => {
                                     asset_server.load("embedded://textures/items/wood.png")
                                 }
-                                Item::Stone => {
+                                Some(Item::Stone) => {
                                     asset_server.load("embedded://textures/items/stone.png")
                                 }
-                                Item::Product => {
+                                Some(Item::Product) => {
                                     asset_server.load("embedded://textures/items/product.png")
                                 }
                             };
@@ -1257,7 +1249,7 @@ fn manage_tiles(
                             Box::new(Conveyor {
                                 position: pos,
                                 direction,
-                                item: Item::None,
+                                item: None,
                             }) as Box<dyn Tile>,
                             1,
                         ),
@@ -1281,7 +1273,7 @@ fn manage_tiles(
                                 position: pos,
                                 direction,
                                 interval: 5,
-                                spawn_item: Item::Stone,
+                                spawn_item: Some(Item::Stone),
                                 required_terrain: TerrainTileType::Dirt,
                             }) as Box<dyn Tile>,
                             3,
@@ -1290,7 +1282,7 @@ fn manage_tiles(
                             Box::new(Conveyor {
                                 position: pos,
                                 direction,
-                                item: Item::None,
+                                item: None,
                             }) as Box<dyn Tile>,
                             1,
                         ),
@@ -1309,7 +1301,7 @@ fn manage_tiles(
                             Box::new(Conveyor {
                                 position: pos,
                                 direction,
-                                item: Item::None,
+                                item: None,
                             }) as Box<dyn Tile>,
                             1,
                         ),
@@ -1333,7 +1325,7 @@ fn manage_tiles(
                                 position: pos,
                                 direction,
                                 interval: 5,
-                                spawn_item: Item::Stone,
+                                spawn_item: Some(Item::Stone),
                                 required_terrain: TerrainTileType::Dirt,
                             }) as Box<dyn Tile>,
                             3,
@@ -1342,7 +1334,7 @@ fn manage_tiles(
                             Box::new(Conveyor {
                                 position: pos,
                                 direction,
-                                item: Item::None,
+                                item: None,
                             }) as Box<dyn Tile>,
                             1,
                         ),
