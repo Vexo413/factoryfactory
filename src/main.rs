@@ -35,16 +35,20 @@ enum SerializableTile {
     Extractor {
         position: Position,
         direction: Direction,
-        spawn_item: Option<Item>,
-        interval: i32,
-        required_terrain: TerrainTileType,
+        extractor_type: ExtractorType,
     },
     Factory {
         position: Position,
         direction: Direction,
         factory_type: FactoryType,
         inventory: HashMap<Item, u32>,
-        capacity: HashMap<Item, u32>,
+    },
+
+    Storage {
+        position: Position,
+        direction: Direction,
+        inventory: HashMap<Item, u32>,
+        storage_type: StorageType,
     },
 }
 
@@ -57,11 +61,11 @@ struct SerializableWorld {
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Encode, Decode)]
 enum TerrainTileType {
-    Grass,
-    Dirt,
+    RawFlextoriumDeposit,
+    RawRigtoriumDeposit,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encode, Decode)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encode, Decode, PartialEq, Eq)]
 enum Direction {
     Up,
     Down,
@@ -74,6 +78,19 @@ enum FactoryType {
     Assembler,
 }
 
+impl FactoryType {
+    fn capacity(&self) -> HashMap<Item, u32> {
+        match self {
+            FactoryType::Assembler => {
+                let mut hashmap = HashMap::new();
+                hashmap.insert(Item::RawRigtorium, 5);
+                hashmap.insert(Item::RawFlextorium, 5);
+                hashmap
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 enum Action {
     Move(Position, Position, Item),
@@ -82,8 +99,8 @@ enum Action {
 
 #[derive(PartialEq, Eq, Clone, Hash, Debug, Copy, Deserialize, Serialize, Encode, Decode)]
 enum Item {
-    Wood,
-    Stone,
+    RawFlextorium,
+    RawRigtorium,
     Product,
 }
 
@@ -163,9 +180,7 @@ impl WorldRes {
                             SerializableTile::Extractor {
                                 position: extractor.position,
                                 direction: extractor.direction,
-                                spawn_item: extractor.spawn_item,
-                                interval: extractor.interval,
-                                required_terrain: extractor.required_terrain,
+                                extractor_type: extractor.extractor_type,
                             }
                         } else if let Some(factory) = tile.as_any().downcast_ref::<Factory>() {
                             SerializableTile::Factory {
@@ -173,7 +188,6 @@ impl WorldRes {
                                 direction: factory.direction,
                                 factory_type: factory.factory_type,
                                 inventory: factory.inventory.clone(),
-                                capacity: factory.capacity.clone(),
                             }
                         } else {
                             SerializableTile::Conveyor {
@@ -234,28 +248,33 @@ impl WorldRes {
                 SerializableTile::Extractor {
                     position,
                     direction,
-                    spawn_item,
-                    interval,
-                    required_terrain,
+                    extractor_type,
                 } => Box::new(Extractor {
                     position,
                     direction,
-                    spawn_item,
-                    interval,
-                    required_terrain,
+                    extractor_type,
                 }),
                 SerializableTile::Factory {
                     position,
                     direction,
                     factory_type,
                     inventory,
-                    capacity,
                 } => Box::new(Factory {
                     position,
                     direction,
                     factory_type,
                     inventory,
-                    capacity,
+                }),
+                SerializableTile::Storage {
+                    position,
+                    direction,
+                    storage_type,
+                    inventory,
+                } => Box::new(Storage {
+                    position,
+                    direction,
+                    storage_type,
+                    inventory,
                 }),
             };
 
@@ -269,9 +288,9 @@ impl WorldRes {
             for y in -20..=20 {
                 let noise_val = perlin.get([x as f64 * noise_scale, y as f64 * noise_scale]);
                 let terrain_type = if noise_val > 0.0 {
-                    TerrainTileType::Grass
+                    TerrainTileType::RawFlextoriumDeposit
                 } else {
-                    TerrainTileType::Dirt
+                    TerrainTileType::RawRigtoriumDeposit
                 };
                 terrain.insert(Position::new(x, y), terrain_type);
             }
@@ -363,23 +382,47 @@ impl Tile for Conveyor {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encode, Decode)]
+enum ExtractorType {
+    RawFlextorium,
+    RawRigtorium,
+}
+impl ExtractorType {
+    fn interval(&self) -> i32 {
+        match self {
+            ExtractorType::RawRigtorium => 5,
+            ExtractorType::RawFlextorium => 5,
+        }
+    }
+    fn terrain(&self) -> TerrainTileType {
+        match self {
+            ExtractorType::RawRigtorium => TerrainTileType::RawRigtoriumDeposit,
+            ExtractorType::RawFlextorium => TerrainTileType::RawFlextoriumDeposit,
+        }
+    }
+    fn spawn_item(&self) -> Option<Item> {
+        match self {
+            ExtractorType::RawRigtorium => Some(Item::RawRigtorium),
+            ExtractorType::RawFlextorium => Some(Item::RawFlextorium),
+        }
+    }
+}
+
 #[derive(Debug)]
 struct Extractor {
     position: Position,
     direction: Direction,
-    spawn_item: Option<Item>,
-    interval: i32,
-    required_terrain: TerrainTileType,
+    extractor_type: ExtractorType,
 }
 
 impl Tile for Extractor {
     fn tick(&self, world: &WorldRes) -> Option<Action> {
-        if world.tick_count % self.interval == 0
+        if world.tick_count % self.extractor_type.interval() == 0
             && *world
                 .terrain
                 .get(&self.position)
-                .unwrap_or(&TerrainTileType::Dirt)
-                == self.required_terrain
+                .unwrap_or(&TerrainTileType::RawRigtoriumDeposit)
+                == self.extractor_type.terrain()
         {
             return Some(Action::Produce(self.position));
         }
@@ -401,7 +444,6 @@ struct Factory {
     direction: Direction,
     factory_type: FactoryType,
     inventory: HashMap<Item, u32>,
-    capacity: HashMap<Item, u32>,
 }
 
 impl Factory {
@@ -471,13 +513,84 @@ fn recipe_for(factory_type: FactoryType) -> Recipe {
     match factory_type {
         FactoryType::Assembler => {
             let mut inputs = HashMap::new();
-            inputs.insert(Item::Wood, 1);
-            inputs.insert(Item::Stone, 1);
+            inputs.insert(Item::RawFlextorium, 1);
+            inputs.insert(Item::RawRigtorium, 1);
             Recipe {
                 inputs,
                 output: (Item::Product, 1),
             }
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encode, Decode)]
+enum StorageType {
+    SmallVault,
+    MediumVault,
+    LargeVault,
+}
+
+impl StorageType {
+    fn capacity(&self) -> HashMap<Item, u32> {
+        match self {
+            StorageType::SmallVault => {
+                let mut hashmap = HashMap::new();
+                hashmap.insert(Item::RawRigtorium, 5);
+                hashmap.insert(Item::RawFlextorium, 5);
+                hashmap
+            }
+            StorageType::MediumVault => {
+                let mut hashmap = HashMap::new();
+                hashmap.insert(Item::RawRigtorium, 10);
+                hashmap.insert(Item::RawFlextorium, 10);
+                hashmap
+            }
+
+            StorageType::LargeVault => {
+                let mut hashmap = HashMap::new();
+                hashmap.insert(Item::RawRigtorium, 20);
+                hashmap.insert(Item::RawFlextorium, 20);
+                hashmap
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+struct Storage {
+    position: Position,
+    direction: Direction,
+    inventory: HashMap<Item, u32>,
+    storage_type: StorageType,
+}
+
+impl Tile for Storage {
+    fn tick(&self, world: &WorldRes) -> Option<Action> {
+        let mut end_position = self.position;
+
+        match self.direction {
+            Direction::Up => end_position.y += 1,
+            Direction::Down => end_position.y -= 1,
+            Direction::Left => end_position.x -= 1,
+            Direction::Right => end_position.x += 1,
+        }
+        if let Some(tile) = world.tiles.get(&end_position) {
+            if let Some(conveyor) = tile.0.as_any().downcast_ref::<Conveyor>() {
+                if conveyor.item.is_none() {
+                    return Some(Action::Produce(self.position));
+                }
+            }
+        }
+
+        None
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
     }
 }
 
@@ -529,9 +642,9 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut world: ResM
             for y in -20..=20 {
                 let noise_val = perlin.get([x as f64 * noise_scale, y as f64 * noise_scale]);
                 let terrain_type = if noise_val > 0.0 {
-                    TerrainTileType::Grass
+                    TerrainTileType::RawFlextoriumDeposit
                 } else {
-                    TerrainTileType::Dirt
+                    TerrainTileType::RawRigtoriumDeposit
                 };
                 world.terrain.insert(Position::new(x, y), terrain_type);
             }
@@ -540,8 +653,8 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut world: ResM
 
     for (pos, terrain) in world.terrain.iter() {
         let texture_path = match terrain {
-            TerrainTileType::Grass => "embedded://textures/terrain/grass.png",
-            TerrainTileType::Dirt => "embedded://textures/terrain/dirt.png",
+            TerrainTileType::RawFlextoriumDeposit => "embedded://textures/terrain/flextorium.png",
+            TerrainTileType::RawRigtoriumDeposit => "embedded://textures/terrain/rigtorium.png",
         };
         commands.spawn((
             Sprite::from_image(asset_server.load(texture_path)),
@@ -558,11 +671,9 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut world: ResM
             Position::new(-3, -3),
             (
                 Box::new(Extractor {
-                    interval: 5,
                     position: Position::new(-3, -3),
-                    spawn_item: Some(Item::Stone),
                     direction: Direction::Right,
-                    required_terrain: TerrainTileType::Dirt,
+                    extractor_type: ExtractorType::RawRigtorium,
                 }),
                 3,
             ),
@@ -571,11 +682,9 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut world: ResM
             Position::new(3, 3),
             (
                 Box::new(Extractor {
-                    interval: 5,
                     position: Position::new(3, 3),
-                    spawn_item: Some(Item::Wood),
                     direction: Direction::Left,
-                    required_terrain: TerrainTileType::Grass,
+                    extractor_type: ExtractorType::RawFlextorium,
                 }),
                 3,
             ),
@@ -585,7 +694,9 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut world: ResM
     for (pos, _) in world.tiles.iter() {
         commands
             .spawn((
-                Sprite::from_image(asset_server.load("embedded://textures/tiles/belt.png")),
+                Sprite::from_image(
+                    asset_server.load("embedded://textures/tiles/conveyors/back.png"),
+                ),
                 Transform {
                     translation: Vec3::new(pos.x as f32 * TILE_SIZE, pos.y as f32 * TILE_SIZE, 0.0),
                     scale: Vec3::splat(TILE_SIZE / IMAGE_SIZE),
@@ -629,7 +740,7 @@ fn tick_tiles(
                             }
                         } else if let Some(factory) = tile.0.as_any_mut().downcast_mut::<Factory>()
                         {
-                            if factory.capacity.get(&item).unwrap_or(&0_u32)
+                            if factory.factory_type.capacity().get(&item).unwrap_or(&0_u32)
                                 > factory.inventory.get(&item).unwrap_or(&0_u32)
                             {
                                 *factory.inventory.entry(item).or_insert(0) += 1;
@@ -670,7 +781,7 @@ fn tick_tiles(
                             tile.0.as_any_mut().downcast_mut::<Extractor>()
                         {
                             let mut end_position = extractor.position;
-                            let item = extractor.spawn_item;
+                            let item = extractor.extractor_type.spawn_item();
                             match extractor.direction {
                                 Direction::Up => end_position.y += 1,
                                 Direction::Down => end_position.y -= 1,
@@ -731,8 +842,12 @@ fn tick_tiles(
                                         timer: Timer::from_seconds(TICK_LENGTH, TimerMode::Once),
                                     },
                                     Sprite::from_image(asset_server.load(match item {
-                                        Item::Wood => "embedded://textures/items/wood.png",
-                                        Item::Stone => "embedded://textures/items/stone.png",
+                                        Item::RawFlextorium => {
+                                            "embedded://textures/items/raw_flextorium.png"
+                                        }
+                                        Item::RawRigtorium => {
+                                            "embedded://textures/items/raw_rigtorium.png"
+                                        }
                                         Item::Product => "embedded://textures/items/product.png",
                                     })),
                                     Transform {
@@ -743,7 +858,7 @@ fn tick_tiles(
                                 ));
                             }
                         } else if let Some(factory) = tile.0.as_any().downcast_ref::<Factory>() {
-                            if factory.capacity.get(item).unwrap_or(&0_u32)
+                            if factory.factory_type.capacity().get(item).unwrap_or(&0_u32)
                                 > factory.inventory.get(item).unwrap_or(&0_u32)
                             {
                                 moved.push(*start);
@@ -765,8 +880,12 @@ fn tick_tiles(
                                         timer: Timer::from_seconds(TICK_LENGTH, TimerMode::Once),
                                     },
                                     Sprite::from_image(asset_server.load(match item {
-                                        Item::Wood => "embedded://textures/items/wood.png",
-                                        Item::Stone => "embedded://textures/items/stone.png",
+                                        Item::RawFlextorium => {
+                                            "embedded://textures/items/raw_flextorium.png"
+                                        }
+                                        Item::RawRigtorium => {
+                                            "embedded://textures/items/raw_rigtorium.png"
+                                        }
                                         Item::Product => "embedded://textures/items/product.png",
                                     })),
                                     Transform {
@@ -821,11 +940,11 @@ fn tick_tiles(
                                                 },
                                                 Sprite::from_image(asset_server.load(
                                                     match produced_item {
-                                                        Item::Wood => {
-                                                            "embedded://textures/items/wood.png"
+                                                        Item::RawFlextorium => {
+                                                            "embedded://textures/items/raw_flextorium.png"
                                                         }
-                                                        Item::Stone => {
-                                                            "embedded://textures/items/stone.png"
+                                                        Item::RawRigtorium => {
+                                                            "embedded://textures/items/raw_rigtorium.png"
                                                         }
                                                         Item::Product => {
                                                             "embedded://textures/items/product.png"
@@ -845,7 +964,7 @@ fn tick_tiles(
                         } else if let Some(extractor) = tile.0.as_any().downcast_ref::<Extractor>()
                         {
                             let mut end_position = extractor.position;
-                            let item = extractor.spawn_item;
+                            let item = extractor.extractor_type.spawn_item();
                             match extractor.direction {
                                 Direction::Up => end_position.y += 1,
                                 Direction::Down => end_position.y -= 1,
@@ -878,11 +997,11 @@ fn tick_tiles(
                                             },
                                             Sprite::from_image(asset_server.load(match item {
                                                 None => "embedded://textures/items/none.png",
-                                                Some(Item::Wood) => {
-                                                    "embedded://textures/items/wood.png"
+                                                Some(Item::RawFlextorium) => {
+                                                    "embedded://textures/items/raw_flextorium.png"
                                                 }
-                                                Some(Item::Stone) => {
-                                                    "embedded://textures/items/stone.png"
+                                                Some(Item::RawRigtorium) => {
+                                                    "embedded://textures/items/raw_rigtorium.png"
                                                 }
                                                 Some(Item::Product) => {
                                                     "embedded://textures/items/product.png"
@@ -999,7 +1118,11 @@ fn update_tile_visuals(
                     tile_sprite.pos.y as f32 * TILE_SIZE,
                     0.0,
                 );
-                sprite.image = asset_server.load("embedded://textures/tiles/belt.png");
+
+                // Determine which texture to use based on incoming conveyors
+                let texture_path = determine_conveyor_texture(&world, conveyor);
+                sprite.image = asset_server.load(texture_path);
+
                 transform.rotation = match conveyor.direction {
                     Direction::Up => Quat::IDENTITY,
                     Direction::Down => Quat::from_rotation_z(PI),
@@ -1027,11 +1150,10 @@ fn update_tile_visuals(
 
                             child_sprite.image = match conveyor.item {
                                 None => asset_server.load("embedded://textures/items/none.png"),
-                                Some(Item::Wood) => {
-                                    asset_server.load("embedded://textures/items/wood.png")
-                                }
-                                Some(Item::Stone) => {
-                                    asset_server.load("embedded://textures/items/stone.png")
+                                Some(Item::RawFlextorium) => asset_server
+                                    .load("embedded://textures/items/raw_flextorium.png"),
+                                Some(Item::RawRigtorium) => {
+                                    asset_server.load("embedded://textures/items/raw_rigtorium.png")
                                 }
                                 Some(Item::Product) => {
                                     asset_server.load("embedded://textures/items/product.png")
@@ -1077,40 +1199,112 @@ fn update_tile_visuals(
                     tile_sprite.pos.y as f32 * TILE_SIZE,
                     2.0,
                 );
-                sprite.image = asset_server.load("embedded://textures/tiles/extractor.png");
+                sprite.image = asset_server.load(match extractor.extractor_type {
+                    ExtractorType::RawRigtorium => {
+                        "embedded://textures/tiles/extractors/rigtorium.png"
+                    }
+                    ExtractorType::RawFlextorium => {
+                        "embedded://textures/tiles/extractors/flextorium.png"
+                    }
+                });
+
                 transform.rotation = match extractor.direction {
                     Direction::Up => Quat::IDENTITY,
                     Direction::Down => Quat::from_rotation_z(PI),
                     Direction::Left => Quat::from_rotation_z(FRAC_PI_2),
                     Direction::Right => Quat::from_rotation_z(-FRAC_PI_2),
                 };
-                if let Ok(children) = children_query.get(entity) {
-                    for &child in children.iter() {
-                        if let Ok((mut child_sprite, mut child_transform)) =
-                            child_sprite_query.get_mut(child)
-                        {
-                            child_transform.translation = Vec3::new(0.0, 0.0, 1.0);
-                            child_sprite.image = match extractor.spawn_item {
-                                None => asset_server.load("embedded://textures/items/none.png"),
-                                Some(Item::Wood) => {
-                                    asset_server.load("embedded://textures/items/wood.png")
-                                }
-                                Some(Item::Stone) => {
-                                    asset_server.load("embedded://textures/items/stone.png")
-                                }
-                                Some(Item::Product) => {
-                                    asset_server.load("embedded://textures/items/product.png")
-                                }
-                            };
-                        }
-                    }
-                }
             } else {
                 sprite.color = css::GRAY.into();
             }
         } else {
             commands.entity(entity).despawn_recursive();
         }
+    }
+}
+fn determine_conveyor_texture(world: &WorldRes, conveyor: &Conveyor) -> &'static str {
+    let pos = conveyor.position;
+    let dir = conveyor.direction;
+
+    // Calculate positions to check (behind, left, right relative to conveyor direction)
+    let (behind_pos, left_pos, right_pos) = match dir {
+        Direction::Up => (
+            Position::new(pos.x, pos.y - 1), // behind = down
+            Position::new(pos.x - 1, pos.y), // left
+            Position::new(pos.x + 1, pos.y), // right
+        ),
+        Direction::Down => (
+            Position::new(pos.x, pos.y + 1), // behind = up
+            Position::new(pos.x + 1, pos.y), // left (from perspective of down-facing conveyor)
+            Position::new(pos.x - 1, pos.y), // right (from perspective of down-facing conveyor)
+        ),
+        Direction::Left => (
+            Position::new(pos.x + 1, pos.y), // behind = right
+            Position::new(pos.x, pos.y - 1), // left (from perspective of left-facing conveyor)
+            Position::new(pos.x, pos.y + 1), // right (from perspective of left-facing conveyor)
+        ),
+        Direction::Right => (
+            Position::new(pos.x - 1, pos.y), // behind = left
+            Position::new(pos.x, pos.y + 1), // left (from perspective of right-facing conveyor)
+            Position::new(pos.x, pos.y - 1), // right (from perspective of right-facing conveyor)
+        ),
+    };
+
+    // Check if conveyors at these positions are pointing to current conveyor
+    let has_behind = is_conveyor_pointing_to(world, behind_pos, dir);
+    let has_left = is_conveyor_pointing_to(world, left_pos, rotate_direction_clockwise(dir));
+    let has_right =
+        is_conveyor_pointing_to(world, right_pos, rotate_direction_counterclockwise(dir));
+
+    // Select texture based on incoming conveyors
+    match (has_behind, has_left, has_right) {
+        (true, true, false) => "embedded://textures/tiles/conveyors/left_back.png",
+        (true, false, true) => "embedded://textures/tiles/conveyors/right_back.png",
+        (false, true, true) => "embedded://textures/tiles/conveyors/sides.png",
+        (true, false, false) => "embedded://textures/tiles/conveyors/back.png",
+        (false, true, false) => "embedded://textures/tiles/conveyors/left.png",
+        (false, false, true) => "embedded://textures/tiles/conveyors/right.png",
+        (true, true, true) => "embedded://textures/tiles/conveyors/all.png",
+        _ => "embedded://textures/tiles/conveyors/back.png", // Default for all other cases
+    }
+}
+
+fn is_conveyor_pointing_to(
+    world: &WorldRes,
+    from_pos: Position,
+    pointing_direction: Direction,
+) -> bool {
+    if let Some(tile) = world.tiles.get(&from_pos) {
+        if let Some(conveyor) = tile.0.as_any().downcast_ref::<Conveyor>() {
+            return conveyor.direction == pointing_direction;
+        }
+    }
+    false
+}
+fn opposite_direction(dir: Direction) -> Direction {
+    match dir {
+        Direction::Up => Direction::Down,
+        Direction::Down => Direction::Up,
+        Direction::Left => Direction::Right,
+        Direction::Right => Direction::Left,
+    }
+}
+
+fn rotate_direction_clockwise(dir: Direction) -> Direction {
+    match dir {
+        Direction::Up => Direction::Right,
+        Direction::Right => Direction::Down,
+        Direction::Down => Direction::Left,
+        Direction::Left => Direction::Up,
+    }
+}
+
+fn rotate_direction_counterclockwise(dir: Direction) -> Direction {
+    match dir {
+        Direction::Up => Direction::Left,
+        Direction::Left => Direction::Down,
+        Direction::Down => Direction::Right,
+        Direction::Right => Direction::Up,
     }
 }
 
@@ -1187,10 +1381,10 @@ fn manage_tiles(
 
         let texture_path = match placer.tile_type {
             0 => "embedded://textures/tiles/none.png",
-            1 => "embedded://textures/tiles/belt.png",
+            1 => "embedded://textures/tiles/conveyors/back.png",
             2 => "embedded://textures/tiles/assembler.png",
             3 => "embedded://textures/tiles/extractor.png",
-            _ => "embedded://textures/tiles/belt.png",
+            _ => "embedded://textures/tiles/conveyors/back.png",
         };
 
         let preview_entity = commands
@@ -1255,15 +1449,14 @@ fn manage_tiles(
                         ),
                         2 => {
                             let mut hashmap = HashMap::new();
-                            hashmap.insert(Item::Wood, 5);
-                            hashmap.insert(Item::Stone, 5);
+                            hashmap.insert(Item::RawFlextorium, 5);
+                            hashmap.insert(Item::RawRigtorium, 5);
                             (
                                 Box::new(Factory {
                                     factory_type: FactoryType::Assembler,
                                     position: pos,
                                     direction,
                                     inventory: HashMap::new(),
-                                    capacity: hashmap,
                                 }) as Box<dyn Tile>,
                                 2,
                             )
@@ -1272,9 +1465,7 @@ fn manage_tiles(
                             Box::new(Extractor {
                                 position: pos,
                                 direction,
-                                interval: 5,
-                                spawn_item: Some(Item::Stone),
-                                required_terrain: TerrainTileType::Dirt,
+                                extractor_type: ExtractorType::RawRigtorium,
                             }) as Box<dyn Tile>,
                             3,
                         ),
@@ -1307,15 +1498,14 @@ fn manage_tiles(
                         ),
                         2 => {
                             let mut hashmap = HashMap::new();
-                            hashmap.insert(Item::Wood, 5);
-                            hashmap.insert(Item::Stone, 5);
+                            hashmap.insert(Item::RawFlextorium, 5);
+                            hashmap.insert(Item::RawRigtorium, 5);
                             (
                                 Box::new(Factory {
                                     factory_type: FactoryType::Assembler,
                                     position: pos,
                                     direction,
                                     inventory: HashMap::new(),
-                                    capacity: hashmap,
                                 }) as Box<dyn Tile>,
                                 2,
                             )
@@ -1324,9 +1514,7 @@ fn manage_tiles(
                             Box::new(Extractor {
                                 position: pos,
                                 direction,
-                                interval: 5,
-                                spawn_item: Some(Item::Stone),
-                                required_terrain: TerrainTileType::Dirt,
+                                extractor_type: ExtractorType::RawRigtorium,
                             }) as Box<dyn Tile>,
                             3,
                         ),
@@ -1345,7 +1533,7 @@ fn manage_tiles(
                     commands
                         .spawn((
                             Sprite::from_image(
-                                asset_server.load("embedded://textures/tiles/belt.png"),
+                                asset_server.load("embedded://textures/tiles/conveyors/back.png"),
                             ),
                             Transform {
                                 translation: Vec3::new(
