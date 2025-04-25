@@ -23,7 +23,62 @@ const TILE_SIZE: f32 = 64.0;
 const ITEM_SIZE: f32 = 32.0;
 const IMAGE_SIZE: f32 = 128.0;
 const TICK_LENGTH: f32 = 1.0;
-const CAMERA_SPEED: f32 = 5.0;
+const CAMERA_SPEED: f32 = 10.0;
+// Add these constants at the top of your file with the other constants
+const TERRAIN_GEN_RANGE: i32 = 200; // How far to generate terrain (±20)
+const TERRAIN_BASE_THRESHOLD: f64 = 0.4; // Base threshold for resource generation
+
+// Scale determines the size of clusters - smaller values = larger clusters
+const RIGTORIUM_NOISE_SCALE: f64 = 0.08; // Rigtorium cluster size
+const FLEXTORIUM_NOISE_SCALE: f64 = 0.12; // Flextorium cluster size
+const ELECTRINE_NOISE_SCALE: f64 = 0.4; // Electrine cluster size
+
+// Density affects how common each resource is (higher = more common)
+const RIGTORIUM_DENSITY: f64 = 0.05; // Additional bias for Rigtorium
+const FLEXTORIUM_DENSITY: f64 = 0.0; // Additional bias for Flextorium
+const ELECTRINE_DENSITY: f64 = -0.4; // Additional bias for Electrine
+
+const CHUNK_SIZE: i32 = 8;
+const CHUNK_TILE_COUNT: usize = (CHUNK_SIZE * CHUNK_SIZE) as usize;
+const VISIBLE_CHUNKS_RADIUS: i32 = 1; // How many chunks to render around the camera
+
+const MIN_ZOOM: f32 = 0.25;
+const MAX_ZOOM: f32 = 3.0;
+const ZOOM_SPEED: f32 = 0.0001;
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct ChunkPosition {
+    x: i32,
+    y: i32,
+}
+
+impl ChunkPosition {
+    fn new(x: i32, y: i32) -> Self {
+        Self { x, y }
+    }
+
+    // Get world position from chunk position
+    fn to_world_position(&self) -> Vec2 {
+        Vec2::new(
+            self.x as f32 * CHUNK_SIZE as f32 * TILE_SIZE,
+            self.y as f32 * CHUNK_SIZE as f32 * TILE_SIZE,
+        )
+    }
+
+    // Get chunk position from world position
+    fn from_world_position(world_pos: Vec2) -> Self {
+        Self {
+            x: (world_pos.x / (CHUNK_SIZE as f32 * TILE_SIZE)).floor() as i32,
+            y: (world_pos.y / (CHUNK_SIZE as f32 * TILE_SIZE)).floor() as i32,
+        }
+    }
+}
+
+// Define a component to identify chunk entities
+#[derive(Component)]
+struct TerrainChunk {
+    position: ChunkPosition,
+}
 
 #[derive(Serialize, Deserialize, Encode, Decode)]
 enum SerializableTile {
@@ -50,6 +105,7 @@ enum SerializableTile {
         inventory: HashMap<Item, u32>,
         storage_type: StorageType,
     },
+    // todo: add portal
 }
 
 #[derive(Serialize, Deserialize, Encode, Decode)]
@@ -79,6 +135,7 @@ enum Direction {
 enum FactoryType {
     RigtoriumSmelter,
     FlextoriumFabricator,
+    ConveyorConstructor,
 }
 
 impl FactoryType {
@@ -94,6 +151,12 @@ impl FactoryType {
                 let mut hashmap = HashMap::new();
                 hashmap.insert(Item::RawFlextorium, 2);
                 hashmap.insert(Item::Electrine, 2);
+                hashmap
+            }
+            FactoryType::ConveyorConstructor => {
+                let mut hashmap = HashMap::new();
+                hashmap.insert(Item::Flextorium, 4);
+                hashmap.insert(Item::Rigtorium, 2);
                 hashmap
             }
         }
@@ -118,6 +181,15 @@ impl FactoryType {
                     output: Item::Flextorium,
                 }
             }
+            FactoryType::ConveyorConstructor => {
+                let mut inputs = HashMap::new();
+                inputs.insert(Item::Flextorium, 2);
+                inputs.insert(Item::Rigtorium, 1);
+                Recipe {
+                    inputs,
+                    output: Item::Conveyor,
+                }
+            }
         }
     }
     fn sprite(&self) -> String {
@@ -127,6 +199,9 @@ impl FactoryType {
             }
             FactoryType::FlextoriumFabricator => {
                 "embedded://textures/tiles/factories/flextorium_fabricator.png"
+            }
+            FactoryType::ConveyorConstructor => {
+                "embedded://textures/tiles/factories/conveyor_constructor.png"
             }
         }
         .to_string()
@@ -201,6 +276,7 @@ struct Placer {
     direction: Direction,
     tile_type: (u32, u32),
     preview_entity: Option<Entity>,
+    zoom_level: f32, // Add this field to track camera zoom
 }
 
 impl Default for Placer {
@@ -209,6 +285,7 @@ impl Default for Placer {
             direction: Direction::Up,
             tile_type: (1, 1),
             preview_entity: None,
+            zoom_level: 1.0, // Default zoom level (1.0 = 100%)
         }
     }
 }
@@ -217,6 +294,7 @@ impl Default for Placer {
 struct WorldRes {
     tiles: HashMap<Position, (Box<dyn Tile>, (u32, u32))>,
     terrain: HashMap<Position, TerrainTileType>,
+    loaded_chunks: HashSet<ChunkPosition>,
     resources: HashMap<(u32, u32), u32>,
     world_seed: u32,
     tick_timer: Timer,
@@ -225,7 +303,7 @@ struct WorldRes {
 }
 
 impl WorldRes {
-    pub fn save(&self, path: impl AsRef<Path>) -> Result<(), io::Error> {
+    fn save(&self, path: impl AsRef<Path>) -> Result<(), io::Error> {
         let serializable_world = SerializableWorld {
             tiles: self
                 .tiles
@@ -279,7 +357,7 @@ impl WorldRes {
         Ok(())
     }
 
-    pub fn load(path: impl AsRef<Path>) -> io::Result<Self> {
+    fn load(path: impl AsRef<Path>) -> io::Result<Self> {
         let file = File::open(path)?;
 
         let mut decoder = DeflateDecoder::new(file);
@@ -294,6 +372,7 @@ impl WorldRes {
 
         let mut tiles = HashMap::new();
         let mut terrain = HashMap::new();
+        let mut loaded_chunks = HashSet::new();
 
         for (pos_key, (tile, id)) in serializable_world.tiles {
             let pos = Position::from_key(pos_key);
@@ -343,29 +422,60 @@ impl WorldRes {
             tiles.insert(pos, (boxed_tile, id));
         }
 
-        let perlin = Perlin::new(serializable_world.world_seed);
-        let noise_scale = 0.1;
+        if terrain.is_empty() {
+            // Create separate noise generators for each resource type
+            let seed = serializable_world.world_seed;
+            let rigtorium_noise = Perlin::new(seed);
+            let flextorium_noise = Perlin::new(seed.wrapping_add(1));
+            let electrine_noise = Perlin::new(seed.wrapping_add(2));
 
-        for x in -20..=20 {
-            for y in -20..=20 {
-                let noise_val = perlin.get([x as f64 * noise_scale, y as f64 * noise_scale]);
-                dbg!(noise_val);
-                let terrain_type = if noise_val > 0.0 {
-                    TerrainTileType::Stone
-                } else if noise_val > -0.3 {
-                    TerrainTileType::RawRigtoriumDeposit
-                } else if noise_val > -0.7 {
-                    TerrainTileType::RawFlextoriumDeposit
-                } else {
-                    TerrainTileType::ElectrineDeposit
-                };
-                terrain.insert(Position::new(x, y), terrain_type);
+            for x in -TERRAIN_GEN_RANGE..=TERRAIN_GEN_RANGE {
+                for y in -TERRAIN_GEN_RANGE..=TERRAIN_GEN_RANGE {
+                    // Calculate separate noise values with different scales for each resource type
+                    let rigtorium_val = rigtorium_noise.get([
+                        x as f64 * RIGTORIUM_NOISE_SCALE,
+                        y as f64 * RIGTORIUM_NOISE_SCALE,
+                    ]) + RIGTORIUM_DENSITY;
+
+                    let flextorium_val = flextorium_noise.get([
+                        x as f64 * FLEXTORIUM_NOISE_SCALE,
+                        y as f64 * FLEXTORIUM_NOISE_SCALE,
+                    ]) + FLEXTORIUM_DENSITY;
+
+                    let electrine_val = electrine_noise.get([
+                        x as f64 * ELECTRINE_NOISE_SCALE,
+                        y as f64 * ELECTRINE_NOISE_SCALE,
+                    ]) + ELECTRINE_DENSITY;
+
+                    // Determine terrain type based on highest noise value that exceeds threshold
+                    let terrain_type = if rigtorium_val > TERRAIN_BASE_THRESHOLD
+                        && rigtorium_val > flextorium_val
+                        && rigtorium_val > electrine_val
+                    {
+                        TerrainTileType::RawRigtoriumDeposit
+                    } else if flextorium_val > TERRAIN_BASE_THRESHOLD
+                        && flextorium_val > rigtorium_val
+                        && flextorium_val > electrine_val
+                    {
+                        TerrainTileType::RawFlextoriumDeposit
+                    } else if electrine_val > TERRAIN_BASE_THRESHOLD
+                        && electrine_val > rigtorium_val
+                        && electrine_val > flextorium_val
+                    {
+                        TerrainTileType::ElectrineDeposit
+                    } else {
+                        TerrainTileType::Stone // Default is stone
+                    };
+
+                    terrain.insert(Position::new(x, y), terrain_type);
+                }
             }
         }
 
         Ok(WorldRes {
             tiles,
             terrain,
+            loaded_chunks,
             resources: serializable_world.resources,
             world_seed: serializable_world.world_seed,
             tick_timer: Timer::from_seconds(TICK_LENGTH, TimerMode::Repeating),
@@ -382,6 +492,7 @@ impl Default for WorldRes {
         resources.insert((1, 1), 40);
         resources.insert((2, 1), 10);
         resources.insert((2, 2), 10);
+        resources.insert((2, 3), 10);
         resources.insert((3, 1), 10);
         resources.insert((3, 2), 10);
         resources.insert((3, 3), 10);
@@ -391,6 +502,7 @@ impl Default for WorldRes {
         world.unwrap_or(WorldRes {
             tiles: HashMap::new(),
             terrain: HashMap::new(),
+            loaded_chunks: HashSet::new(),
             resources,
             world_seed: 59,
             tick_timer: Timer::from_seconds(TICK_LENGTH, TimerMode::Repeating),
@@ -505,11 +617,7 @@ struct Extractor {
 impl Tile for Extractor {
     fn tick(&self, world: &WorldRes) -> Option<Action> {
         if world.tick_count % self.extractor_type.interval() == 0
-            && *world
-                .terrain
-                .get(&self.position)
-                .unwrap_or(&TerrainTileType::RawRigtoriumDeposit)
-                == self.extractor_type.terrain()
+            && world.terrain.get(&self.position) == Some(&self.extractor_type.terrain())
         {
             return Some(Action::Produce(self.position));
         }
@@ -717,6 +825,7 @@ fn main() {
         .add_systems(
             Update,
             (
+                manage_terrain_chunks,
                 tick_tiles,
                 update_tile_visuals.after(tick_tiles),
                 animate_items.after(update_tile_visuals),
@@ -729,28 +838,6 @@ fn main() {
 
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut world: ResMut<WorldRes>) {
     commands.spawn(Camera2d);
-
-    if world.terrain.is_empty() {
-        let perlin = Perlin::new(world.world_seed);
-        let noise_scale = 0.1;
-
-        for x in -20..=20 {
-            for y in -20..=20 {
-                let noise_val = perlin.get([x as f64 * noise_scale, y as f64 * noise_scale]);
-                dbg!(noise_val);
-                let terrain_type = if noise_val > 0.0 {
-                    TerrainTileType::Stone
-                } else if noise_val > -0.3 {
-                    TerrainTileType::RawRigtoriumDeposit
-                } else if noise_val > -0.7 {
-                    TerrainTileType::RawFlextoriumDeposit
-                } else {
-                    TerrainTileType::ElectrineDeposit
-                };
-                world.terrain.insert(Position::new(x, y), terrain_type);
-            }
-        }
-    }
 
     for (pos, terrain) in world.terrain.iter() {
         let texture_path = match terrain {
@@ -816,6 +903,163 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut world: ResM
     }
 }
 
+fn manage_terrain_chunks(
+    mut commands: Commands,
+    mut world: ResMut<WorldRes>,
+    camera_query: Query<&Transform, With<Camera2d>>,
+    chunk_query: Query<(Entity, &TerrainChunk)>,
+    asset_server: Res<AssetServer>,
+) {
+    if let Ok(camera_transform) = camera_query.single() {
+        let camera_pos = camera_transform.translation.truncate();
+
+        // Get the chunk the camera is in
+        let camera_chunk = ChunkPosition::from_world_position(camera_pos);
+
+        // Calculate which chunks should be visible
+        let mut visible_chunks = HashSet::new();
+        for x in
+            (camera_chunk.x - VISIBLE_CHUNKS_RADIUS)..(camera_chunk.x + VISIBLE_CHUNKS_RADIUS + 1)
+        {
+            for y in (camera_chunk.y - VISIBLE_CHUNKS_RADIUS)
+                ..(camera_chunk.y + VISIBLE_CHUNKS_RADIUS + 1)
+            {
+                visible_chunks.insert(ChunkPosition::new(x, y));
+            }
+        }
+
+        // Unload chunks that are no longer visible
+        let mut chunks_to_unload = HashSet::new();
+        for &loaded_chunk in &world.loaded_chunks {
+            if !visible_chunks.contains(&loaded_chunk) {
+                chunks_to_unload.insert(loaded_chunk);
+            }
+        }
+
+        for chunk_pos in &chunks_to_unload {
+            // Find and despawn the chunk entity
+            for (entity, chunk) in &chunk_query {
+                if chunk.position == *chunk_pos {
+                    commands.entity(entity).despawn();
+                    break;
+                }
+            }
+            world.loaded_chunks.remove(chunk_pos);
+        }
+
+        // Load new chunks that have become visible
+        for chunk_pos in &visible_chunks {
+            if !world.loaded_chunks.contains(chunk_pos) {
+                // Generate and spawn the chunk
+                generate_chunk(&mut commands, &mut world, *chunk_pos, &asset_server);
+                world.loaded_chunks.insert(*chunk_pos);
+            }
+        }
+    }
+}
+
+fn generate_chunk(
+    commands: &mut Commands,
+    world: &mut WorldRes,
+    chunk_pos: ChunkPosition,
+    asset_server: &AssetServer,
+) {
+    // Create a parent entity for the chunk
+    let chunk_entity = commands
+        .spawn((TerrainChunk {
+            position: chunk_pos,
+        },))
+        .id();
+
+    // Generate terrain for all tiles in the chunk
+    let chunk_world_pos = chunk_pos.to_world_position();
+
+    // Create noise generators with different seeds
+    let seed = world.world_seed;
+    let rigtorium_noise = Perlin::new(seed);
+    let flextorium_noise = Perlin::new(seed.wrapping_add(1));
+    let electrine_noise = Perlin::new(seed.wrapping_add(2));
+
+    // Spawn all the terrain tiles as children of the chunk entity
+    commands.entity(chunk_entity).with_children(|parent| {
+        for x in 0..CHUNK_SIZE {
+            for y in 0..CHUNK_SIZE {
+                // Calculate world position for this tile
+                let world_x = chunk_pos.x * CHUNK_SIZE + x;
+                let world_y = chunk_pos.y * CHUNK_SIZE + y;
+                let pos = Position::new(world_x, world_y);
+
+                // Calculate noise values for each resource type
+                let rigtorium_val = rigtorium_noise.get([
+                    world_x as f64 * RIGTORIUM_NOISE_SCALE,
+                    world_y as f64 * RIGTORIUM_NOISE_SCALE,
+                ]) + RIGTORIUM_DENSITY;
+
+                let flextorium_val = flextorium_noise.get([
+                    world_x as f64 * FLEXTORIUM_NOISE_SCALE,
+                    world_y as f64 * FLEXTORIUM_NOISE_SCALE,
+                ]) + FLEXTORIUM_DENSITY;
+
+                let electrine_val = electrine_noise.get([
+                    world_x as f64 * ELECTRINE_NOISE_SCALE,
+                    world_y as f64 * ELECTRINE_NOISE_SCALE,
+                ]) + ELECTRINE_DENSITY;
+
+                // Determine terrain type
+                let terrain_type = if rigtorium_val > TERRAIN_BASE_THRESHOLD
+                    && rigtorium_val > flextorium_val
+                    && rigtorium_val > electrine_val
+                {
+                    TerrainTileType::RawRigtoriumDeposit
+                } else if flextorium_val > TERRAIN_BASE_THRESHOLD
+                    && flextorium_val > rigtorium_val
+                    && flextorium_val > electrine_val
+                {
+                    TerrainTileType::RawFlextoriumDeposit
+                } else if electrine_val > TERRAIN_BASE_THRESHOLD
+                    && electrine_val > rigtorium_val
+                    && electrine_val > flextorium_val
+                {
+                    TerrainTileType::ElectrineDeposit
+                } else {
+                    TerrainTileType::Stone
+                };
+
+                // Store terrain type in world
+                world.terrain.insert(pos, terrain_type);
+
+                // Choose texture based on terrain type
+                let texture_path = match terrain_type {
+                    TerrainTileType::Stone => "embedded://textures/terrain/stone.png",
+                    TerrainTileType::RawFlextoriumDeposit => {
+                        "embedded://textures/terrain/flextorium.png"
+                    }
+                    TerrainTileType::RawRigtoriumDeposit => {
+                        "embedded://textures/terrain/rigtorium.png"
+                    }
+                    TerrainTileType::ElectrineDeposit => {
+                        "embedded://textures/terrain/electrine.png"
+                    }
+                };
+
+                // Spawn the terrain tile sprite as a child of the chunk
+                parent.spawn((
+                    Sprite::from_image(asset_server.load(texture_path)),
+                    Transform {
+                        translation: Vec3::new(
+                            world_x as f32 * TILE_SIZE,
+                            world_y as f32 * TILE_SIZE,
+                            -1.0,
+                        ),
+                        scale: Vec3::splat(TILE_SIZE / IMAGE_SIZE),
+                        ..Default::default()
+                    },
+                ));
+            }
+        }
+    });
+}
+
 fn tick_tiles(
     time: Res<Time>,
     mut commands: Commands,
@@ -850,6 +1094,19 @@ fn tick_tiles(
                                 if let Some(start_tile) = world.tiles.get_mut(&start) {
                                     if let Some(start_conveyor) =
                                         start_tile.0.as_any_mut().downcast_mut::<Conveyor>()
+                                    {
+                                        start_conveyor.item = None;
+                                    }
+                                }
+                            }
+                        } else if let Some(end_portal) =
+                            tile.0.as_any_mut().downcast_mut::<Portal>()
+                        {
+                            if end_portal.item.is_none() {
+                                end_portal.item = Some(item);
+                                if let Some(tile) = world.tiles.get_mut(&start) {
+                                    if let Some(start_conveyor) =
+                                        tile.0.as_any_mut().downcast_mut::<Conveyor>()
                                     {
                                         start_conveyor.item = None;
                                     }
@@ -967,6 +1224,34 @@ fn tick_tiles(
                             if factory.factory_type.capacity().get(item).unwrap_or(&0_u32)
                                 > factory.inventory.get(item).unwrap_or(&0_u32)
                             {
+                                moved.push(*start);
+
+                                let start_pos = Vec3::new(
+                                    start.x as f32 * TILE_SIZE,
+                                    start.y as f32 * TILE_SIZE,
+                                    1.0,
+                                );
+                                let end_pos = Vec3::new(
+                                    end.x as f32 * TILE_SIZE,
+                                    end.y as f32 * TILE_SIZE,
+                                    1.0,
+                                );
+                                commands.spawn((
+                                    ItemAnimation {
+                                        start_pos,
+                                        end_pos,
+                                        timer: Timer::from_seconds(TICK_LENGTH, TimerMode::Once),
+                                    },
+                                    Sprite::from_image(asset_server.load(item.sprite())),
+                                    Transform {
+                                        translation: start_pos,
+                                        scale: Vec3::splat(ITEM_SIZE / IMAGE_SIZE),
+                                        ..Default::default()
+                                    },
+                                ));
+                            }
+                        } else if let Some(end_portal) = tile.0.as_any().downcast_ref::<Portal>() {
+                            if end_portal.item.is_none() {
                                 moved.push(*start);
 
                                 let start_pos = Vec3::new(
@@ -1212,7 +1497,7 @@ fn update_tile_visuals(
                 };
 
                 if let Ok(children) = children_query.get(entity) {
-                    for &child in children.iter() {
+                    for child in children.iter() {
                         if let Ok((mut child_sprite, mut child_transform)) =
                             child_sprite_query.get_mut(child)
                         {
@@ -1259,7 +1544,7 @@ fn update_tile_visuals(
                 };
 
                 if let Ok(children) = children_query.get(entity) {
-                    for &child in children.iter() {
+                    for child in children.iter() {
                         if let Ok((mut child_sprite, _)) = child_sprite_query.get_mut(child) {
                             child_sprite.color = Color::NONE;
                         }
@@ -1279,6 +1564,13 @@ fn update_tile_visuals(
                     Direction::Left => Quat::from_rotation_z(FRAC_PI_2),
                     Direction::Right => Quat::from_rotation_z(-FRAC_PI_2),
                 };
+            } else if tile.0.as_any().is::<Portal>() {
+                transform.translation = Vec3::new(
+                    tile_sprite.pos.x as f32 * TILE_SIZE,
+                    tile_sprite.pos.y as f32 * TILE_SIZE,
+                    2.0,
+                );
+                sprite.image = asset_server.load("embedded://textures/tiles/portal.png");
             } else {
                 sprite.color = css::GRAY.into();
             }
@@ -1357,6 +1649,7 @@ fn get_tile_texture(tile_type: (u32, u32)) -> String {
         (1, 1) => "embedded://textures/tiles/conveyors/back.png",
         (2, 1) => "embedded://textures/tiles/factories/rigtorium_smelter.png",
         (2, 2) => "embedded://textures/tiles/factories/flextorium_fabricator.png",
+        (2, 3) => "embedded://textures/tiles/factories/conveyor_constructor.png",
         (3, 1) => "embedded://textures/tiles/extractors/raw_rigtorium.png",
         (3, 2) => "embedded://textures/tiles/extractors/raw_flextorium.png",
         (3, 3) => "embedded://textures/tiles/extractors/electrine.png",
@@ -1403,7 +1696,7 @@ fn animate_items(
 
 fn manage_tiles(
     windows: Query<&mut Window, With<PrimaryWindow>>,
-    camera_query: Query<(&Camera, &GlobalTransform)>,
+    mut camera_query: Query<(&Camera, &mut Transform)>,
     mut mouse_wheel_events: EventReader<MouseWheel>,
     mouse_button_input: Res<ButtonInput<MouseButton>>,
     keyboard_input: Res<ButtonInput<KeyCode>>,
@@ -1430,334 +1723,284 @@ fn manage_tiles(
     if keyboard_input.pressed(KeyCode::Digit6) {
         placer.tile_type = (4, 3);
     }
+    if keyboard_input.pressed(KeyCode::Digit7) {
+        placer.tile_type = (2, 3);
+    }
+    if keyboard_input.pressed(KeyCode::Digit8) {
+        placer.tile_type = (4, 1);
+    }
     if keyboard_input.pressed(KeyCode::Digit0) {
         placer.tile_type = (2, 2);
     }
 
     for event in mouse_wheel_events.read() {
-        placer.direction = match (placer.direction, event.y.partial_cmp(&0.0)) {
-            (Direction::Up, Some(std::cmp::Ordering::Less)) => Direction::Right,
-            (Direction::Right, Some(std::cmp::Ordering::Less)) => Direction::Down,
-            (Direction::Down, Some(std::cmp::Ordering::Less)) => Direction::Left,
-            (Direction::Left, Some(std::cmp::Ordering::Less)) => Direction::Up,
+        if placer.tile_type == (0, 1) {
+            // When not placing (empty hand) - use mouse wheel for zoom
+            let zoom_delta = event.y * ZOOM_SPEED;
+            placer.zoom_level = (placer.zoom_level + zoom_delta).clamp(MIN_ZOOM, MAX_ZOOM);
 
-            (Direction::Up, Some(std::cmp::Ordering::Greater)) => Direction::Left,
-            (Direction::Left, Some(std::cmp::Ordering::Greater)) => Direction::Down,
-            (Direction::Down, Some(std::cmp::Ordering::Greater)) => Direction::Right,
-            (Direction::Right, Some(std::cmp::Ordering::Greater)) => Direction::Up,
-            (current, _) => current,
-        };
+            // Apply zoom to camera
+            if let Ok((_, mut transform)) = camera_query.get_single_mut() {
+                transform.scale = Vec3::splat(1.0 / placer.zoom_level);
+            }
+        } else {
+            placer.direction = match (placer.direction, event.y.partial_cmp(&0.0)) {
+                (Direction::Up, Some(std::cmp::Ordering::Less)) => Direction::Right,
+                (Direction::Right, Some(std::cmp::Ordering::Less)) => Direction::Down,
+                (Direction::Down, Some(std::cmp::Ordering::Less)) => Direction::Left,
+                (Direction::Left, Some(std::cmp::Ordering::Less)) => Direction::Up,
+
+                (Direction::Up, Some(std::cmp::Ordering::Greater)) => Direction::Left,
+                (Direction::Left, Some(std::cmp::Ordering::Greater)) => Direction::Down,
+                (Direction::Down, Some(std::cmp::Ordering::Greater)) => Direction::Right,
+                (Direction::Right, Some(std::cmp::Ordering::Greater)) => Direction::Up,
+                (current, _) => current,
+            };
+        }
     }
 
-    let Ok(window) = windows.get_single() else {
+    let Ok(window) = windows.single() else {
         return;
     };
     if let Some(screen_pos) = window.cursor_position() {
-        let (camera, camera_transform) = camera_query.single();
-        let window_size = Vec2::new(window.width(), window.height());
+        if let Ok((camera, camera_transform)) = camera_query.single() {
+            let window_size = Vec2::new(window.width(), window.height());
 
-        let mut ndc = (screen_pos / window_size) * 2.0 - Vec2::ONE;
-        ndc.y *= -1.0;
-        let ndc_to_world = camera_transform.compute_matrix() * camera.clip_from_view().inverse();
-        let world_pos = ndc_to_world.project_point3(ndc.extend(-1.0));
-        let world_pos: Vec2 = world_pos.truncate();
+            let mut ndc = (screen_pos / window_size) * 2.0 - Vec2::ONE;
+            ndc.y *= -1.0;
+            let ndc_to_world =
+                camera_transform.compute_matrix() * camera.clip_from_view().inverse();
+            let world_pos = ndc_to_world.project_point3(ndc.extend(-1.0));
+            let world_pos: Vec2 = world_pos.truncate();
 
-        let grid_x = (world_pos.x / TILE_SIZE).round() as i32;
-        let grid_y = (world_pos.y / TILE_SIZE).round() as i32;
-        let pos = Position::new(grid_x, grid_y);
+            let grid_x = (world_pos.x / TILE_SIZE).round() as i32;
+            let grid_y = (world_pos.y / TILE_SIZE).round() as i32;
+            let pos = Position::new(grid_x, grid_y);
 
-        if let Some(preview_entity) = placer.preview_entity {
-            commands.entity(preview_entity).despawn();
-        }
+            if let Some(preview_entity) = placer.preview_entity {
+                commands.entity(preview_entity).despawn();
+            }
 
-        let texture_path = get_tile_texture(placer.tile_type);
+            let texture_path = get_tile_texture(placer.tile_type);
 
-        let preview_entity = commands
-            .spawn((
-                Sprite {
-                    image: asset_server.load(texture_path),
-                    color: Color::srgba(1.0, 1.0, 1.0, 0.5),
-                    ..Default::default()
-                },
-                Transform {
-                    translation: Vec3::new(pos.x as f32 * TILE_SIZE, pos.y as f32 * TILE_SIZE, 5.0),
-                    scale: Vec3::splat(TILE_SIZE / IMAGE_SIZE),
-                    rotation: match placer.direction {
-                        Direction::Up => Quat::IDENTITY,
-                        Direction::Down => Quat::from_rotation_z(PI),
-                        Direction::Left => Quat::from_rotation_z(FRAC_PI_2),
-                        Direction::Right => Quat::from_rotation_z(-FRAC_PI_2),
+            let preview_entity = commands
+                .spawn((
+                    Sprite {
+                        image: asset_server.load(texture_path),
+                        color: Color::srgba(1.0, 1.0, 1.0, 0.5),
+                        ..Default::default()
                     },
-                },
-            ))
-            .id();
+                    Transform {
+                        translation: Vec3::new(
+                            pos.x as f32 * TILE_SIZE,
+                            pos.y as f32 * TILE_SIZE,
+                            5.0,
+                        ),
+                        scale: Vec3::splat(TILE_SIZE / IMAGE_SIZE),
+                        rotation: match placer.direction {
+                            Direction::Up => Quat::IDENTITY,
+                            Direction::Down => Quat::from_rotation_z(PI),
+                            Direction::Left => Quat::from_rotation_z(FRAC_PI_2),
+                            Direction::Right => Quat::from_rotation_z(-FRAC_PI_2),
+                        },
+                    },
+                ))
+                .id();
 
-        placer.preview_entity = Some(preview_entity);
+            placer.preview_entity = Some(preview_entity);
+        }
     }
 
     if mouse_button_input.pressed(MouseButton::Left) {
-        let window = windows.single();
-        if let Some(screen_pos) = window.cursor_position() {
-            let (camera, camera_transform) = camera_query.single();
-            let window_size = Vec2::new(window.width(), window.height());
+        if let Ok(window) = windows.single() {
+            if let Some(screen_pos) = window.cursor_position() {
+                if let Ok((camera, camera_transform)) = camera_query.single() {
+                    let window_size = Vec2::new(window.width(), window.height());
 
-            let mut ndc = (screen_pos / window_size) * 2.0 - Vec2::ONE;
-            ndc.y *= -1.0;
-            let ndc_to_world =
-                camera_transform.compute_matrix() * camera.clip_from_view().inverse();
-            let world_pos = ndc_to_world.project_point3(ndc.extend(-1.0));
-            let world_pos: Vec2 = world_pos.truncate();
+                    let mut ndc = (screen_pos / window_size) * 2.0 - Vec2::ONE;
+                    ndc.y *= -1.0;
+                    let ndc_to_world =
+                        camera_transform.compute_matrix() * camera.clip_from_view().inverse();
+                    let world_pos = ndc_to_world.project_point3(ndc.extend(-1.0));
+                    let world_pos: Vec2 = world_pos.truncate();
 
-            let grid_x = (world_pos.x / TILE_SIZE).round() as i32;
-            let grid_y = (world_pos.y / TILE_SIZE).round() as i32;
-            let pos = Position::new(grid_x, grid_y);
-            let tile_type = placer.tile_type;
-            let direction = placer.direction;
+                    let grid_x = (world_pos.x / TILE_SIZE).round() as i32;
+                    let grid_y = (world_pos.y / TILE_SIZE).round() as i32;
+                    let pos = Position::new(grid_x, grid_y);
+                    let tile_type = placer.tile_type;
+                    let direction = placer.direction;
 
-            if world.tiles.contains_key(&pos) {
-                let current_tile_id = world.tiles.get(&pos).map(|(_, id)| *id).unwrap_or((0, 1));
+                    if world.tiles.contains_key(&pos) {
+                        let current_tile_id =
+                            world.tiles.get(&pos).map(|(_, id)| *id).unwrap_or((0, 1));
 
-                if *world.resources.get(&tile_type).unwrap_or(&0) >= 1
-                    || placer.tile_type == current_tile_id
-                {
-                    *world.resources.entry(current_tile_id).or_insert(0) += 1;
-                    *world.resources.entry(tile_type).or_insert(0) -= 1;
+                        if *world.resources.get(&tile_type).unwrap_or(&0) >= 1
+                            || placer.tile_type == current_tile_id
+                        {
+                            *world.resources.entry(current_tile_id).or_insert(0) += 1;
+                            *world.resources.entry(tile_type).or_insert(0) -= 1;
 
-                    let new_tile = match tile_type {
-                        (1, 1) => (
-                            Box::new(Conveyor {
-                                position: pos,
-                                direction,
-                                item: None,
-                            }) as Box<dyn Tile>,
-                            (1, 1),
-                        ),
-                        (2, 1) => {
-                            let mut hashmap = HashMap::new();
-                            hashmap.insert(Item::RawFlextorium, 5);
-                            hashmap.insert(Item::RawRigtorium, 5);
-                            (
-                                Box::new(Factory {
-                                    factory_type: FactoryType::RigtoriumSmelter,
-                                    position: pos,
-                                    direction,
-                                    inventory: HashMap::new(),
-                                }) as Box<dyn Tile>,
-                                (2, 1),
-                            )
+                            let new_tile = get_new_tile(tile_type, pos, direction);
+
+                            if let Some(entry) = world.tiles.get_mut(&pos) {
+                                *entry = new_tile;
+                            }
                         }
-                        (2, 2) => {
-                            let mut hashmap = HashMap::new();
-                            hashmap.insert(Item::RawFlextorium, 5);
-                            hashmap.insert(Item::RawRigtorium, 5);
-                            (
-                                Box::new(Factory {
-                                    factory_type: FactoryType::FlextoriumFabricator,
-                                    position: pos,
-                                    direction,
-                                    inventory: HashMap::new(),
-                                }) as Box<dyn Tile>,
-                                (2, 2),
-                            )
-                        }
-                        (3, 1) => (
-                            Box::new(Extractor {
-                                position: pos,
-                                direction,
-                                extractor_type: ExtractorType::RawRigtorium,
-                            }) as Box<dyn Tile>,
-                            (3, 1),
-                        ),
-                        (3, 2) => (
-                            Box::new(Extractor {
-                                position: pos,
-                                direction,
-                                extractor_type: ExtractorType::RawFlextorium,
-                            }) as Box<dyn Tile>,
-                            (3, 2),
-                        ),
-                        (3, 3) => (
-                            Box::new(Extractor {
-                                position: pos,
-                                direction,
-                                extractor_type: ExtractorType::Electrine,
-                            }) as Box<dyn Tile>,
-                            (3, 3),
-                        ),
-                        (4, 1) => (
-                            Box::new(Portal {
-                                position: pos,
-                                item: None,
-                            }) as Box<dyn Tile>,
-                            (4, 1),
-                        ),
-                        (5, 1) => (
-                            Box::new(Storage {
-                                position: pos,
-                                direction,
-                                inventory: HashMap::new(),
-                                storage_type: StorageType::SmallVault,
-                            }) as Box<dyn Tile>,
-                            (5, 1),
-                        ),
-                        _ => (
-                            Box::new(Conveyor {
-                                position: pos,
-                                direction,
-                                item: None,
-                            }) as Box<dyn Tile>,
-                            (1, 1),
-                        ),
-                    };
+                    } else {
+                        if *world.resources.get(&tile_type).unwrap_or(&0) >= 1 {
+                            *world.resources.entry(tile_type).or_insert(0) -= 1;
 
-                    if let Some(entry) = world.tiles.get_mut(&pos) {
-                        *entry = new_tile;
+                            let new_tile = get_new_tile(tile_type, pos, direction);
+
+                            world.tiles.insert(pos, new_tile);
+
+                            commands
+                                .spawn((
+                                    Sprite::from_image(
+                                        asset_server
+                                            .load("embedded://textures/tiles/conveyors/back.png"),
+                                    ),
+                                    Transform {
+                                        translation: Vec3::new(
+                                            pos.x as f32 * TILE_SIZE,
+                                            pos.y as f32 * TILE_SIZE,
+                                            0.0,
+                                        ),
+                                        scale: Vec3::splat(TILE_SIZE / IMAGE_SIZE),
+                                        ..Default::default()
+                                    },
+                                    TileSprite { pos },
+                                ))
+                                .with_children(|parent| {
+                                    parent.spawn((
+                                        Sprite::from_image(
+                                            asset_server.load("embedded://textures/items/none.png"),
+                                        ),
+                                        Transform::from_scale(Vec3::splat(0.5)),
+                                    ));
+                                });
+                        }
                     }
-                }
-            } else {
-                if *world.resources.get(&tile_type).unwrap_or(&0) >= 1 {
-                    *world.resources.entry(tile_type).or_insert(0) -= 1;
-
-                    let new_tile = match tile_type {
-                        (1, 1) => (
-                            Box::new(Conveyor {
-                                position: pos,
-                                direction,
-                                item: None,
-                            }) as Box<dyn Tile>,
-                            (1, 1),
-                        ),
-                        (2, 1) => {
-                            let mut hashmap = HashMap::new();
-                            hashmap.insert(Item::RawFlextorium, 5);
-                            hashmap.insert(Item::RawRigtorium, 5);
-                            (
-                                Box::new(Factory {
-                                    factory_type: FactoryType::RigtoriumSmelter,
-                                    position: pos,
-                                    direction,
-                                    inventory: HashMap::new(),
-                                }) as Box<dyn Tile>,
-                                (2, 1),
-                            )
-                        }
-                        (2, 2) => {
-                            let mut hashmap = HashMap::new();
-                            hashmap.insert(Item::RawFlextorium, 5);
-                            hashmap.insert(Item::RawRigtorium, 5);
-                            (
-                                Box::new(Factory {
-                                    factory_type: FactoryType::FlextoriumFabricator,
-                                    position: pos,
-                                    direction,
-                                    inventory: HashMap::new(),
-                                }) as Box<dyn Tile>,
-                                (2, 2),
-                            )
-                        }
-                        (3, 1) => (
-                            Box::new(Extractor {
-                                position: pos,
-                                direction,
-                                extractor_type: ExtractorType::RawRigtorium,
-                            }) as Box<dyn Tile>,
-                            (3, 1),
-                        ),
-                        (3, 2) => (
-                            Box::new(Extractor {
-                                position: pos,
-                                direction,
-                                extractor_type: ExtractorType::RawFlextorium,
-                            }) as Box<dyn Tile>,
-                            (3, 2),
-                        ),
-                        (3, 3) => (
-                            Box::new(Extractor {
-                                position: pos,
-                                direction,
-                                extractor_type: ExtractorType::Electrine,
-                            }) as Box<dyn Tile>,
-                            (3, 3),
-                        ),
-                        (4, 1) => (
-                            Box::new(Portal {
-                                position: pos,
-                                item: None,
-                            }) as Box<dyn Tile>,
-                            (4, 1),
-                        ),
-                        (5, 1) => (
-                            Box::new(Storage {
-                                position: pos,
-                                direction,
-                                inventory: HashMap::new(),
-                                storage_type: StorageType::SmallVault,
-                            }) as Box<dyn Tile>,
-                            (5, 1),
-                        ),
-                        _ => (
-                            Box::new(Conveyor {
-                                position: pos,
-                                direction,
-                                item: None,
-                            }) as Box<dyn Tile>,
-                            (1, 1),
-                        ),
-                    };
-
-                    world.tiles.insert(pos, new_tile);
-
-                    commands
-                        .spawn((
-                            Sprite::from_image(
-                                asset_server.load("embedded://textures/tiles/conveyors/back.png"),
-                            ),
-                            Transform {
-                                translation: Vec3::new(
-                                    pos.x as f32 * TILE_SIZE,
-                                    pos.y as f32 * TILE_SIZE,
-                                    0.0,
-                                ),
-                                scale: Vec3::splat(TILE_SIZE / IMAGE_SIZE),
-                                ..Default::default()
-                            },
-                            TileSprite { pos },
-                        ))
-                        .with_children(|parent| {
-                            parent.spawn((
-                                Sprite::from_image(
-                                    asset_server.load("embedded://textures/items/none.png"),
-                                ),
-                                Transform::from_scale(Vec3::splat(0.5)),
-                            ));
-                        });
                 }
             }
         }
     }
-    if mouse_button_input.just_pressed(MouseButton::Right) {
-        let window = windows.single();
-        if let Some(screen_pos) = window.cursor_position() {
-            let (camera, camera_transform) = camera_query.single();
-            let window_size = Vec2::new(window.width(), window.height());
+    if mouse_button_input.pressed(MouseButton::Right) {
+        placer.tile_type = (0, 1);
+        if let Ok(window) = windows.single() {
+            if let Some(screen_pos) = window.cursor_position() {
+                if let Ok((camera, camera_transform)) = camera_query.single() {
+                    let window_size = Vec2::new(window.width(), window.height());
 
-            let mut ndc = (screen_pos / window_size) * 2.0 - Vec2::ONE;
-            ndc.y *= -1.0;
-            let ndc_to_world =
-                camera_transform.compute_matrix() * camera.clip_from_view().inverse();
-            let world_pos = ndc_to_world.project_point3(ndc.extend(-1.0));
-            let world_pos: Vec2 = world_pos.truncate();
+                    let mut ndc = (screen_pos / window_size) * 2.0 - Vec2::ONE;
+                    ndc.y *= -1.0;
+                    let ndc_to_world =
+                        camera_transform.compute_matrix() * camera.clip_from_view().inverse();
+                    let world_pos = ndc_to_world.project_point3(ndc.extend(-1.0));
+                    let world_pos: Vec2 = world_pos.truncate();
 
-            let grid_x = (world_pos.x / TILE_SIZE).round() as i32;
-            let grid_y = (world_pos.y / TILE_SIZE).round() as i32;
-            let pos = Position::new(grid_x, grid_y);
+                    let grid_x = (world_pos.x / TILE_SIZE).round() as i32;
+                    let grid_y = (world_pos.y / TILE_SIZE).round() as i32;
+                    let pos = Position::new(grid_x, grid_y);
 
-            if let Some(entry) = world.tiles.remove_entry(&pos) {
-                *world.resources.entry(entry.1.1).or_insert(0) += 1;
-            } else {
-                placer.tile_type = (0, 1);
+                    if let Some(entry) = world.tiles.remove_entry(&pos) {
+                        *world.resources.entry(entry.1.1).or_insert(0) += 1;
+                    }
+                }
             }
         }
+    }
+}
+
+fn get_new_tile(
+    tile_type: (u32, u32),
+    position: Position,
+    direction: Direction,
+) -> (Box<dyn Tile>, (u32, u32)) {
+    match tile_type {
+        (1, 1) => (
+            Box::new(Conveyor {
+                position,
+                direction,
+                item: None,
+            }) as Box<dyn Tile>,
+            tile_type,
+        ),
+        (2, 1) => (
+            Box::new(Factory {
+                factory_type: FactoryType::RigtoriumSmelter,
+                position,
+                direction,
+                inventory: HashMap::new(),
+            }) as Box<dyn Tile>,
+            tile_type,
+        ),
+        (2, 2) => (
+            Box::new(Factory {
+                factory_type: FactoryType::FlextoriumFabricator,
+                position,
+                direction,
+                inventory: HashMap::new(),
+            }) as Box<dyn Tile>,
+            tile_type,
+        ),
+        (2, 3) => (
+            Box::new(Factory {
+                factory_type: FactoryType::ConveyorConstructor,
+                position,
+                direction,
+                inventory: HashMap::new(),
+            }) as Box<dyn Tile>,
+            tile_type,
+        ),
+        (3, 1) => (
+            Box::new(Extractor {
+                position,
+                direction,
+                extractor_type: ExtractorType::RawRigtorium,
+            }) as Box<dyn Tile>,
+            tile_type,
+        ),
+        (3, 2) => (
+            Box::new(Extractor {
+                position,
+                direction,
+                extractor_type: ExtractorType::RawFlextorium,
+            }) as Box<dyn Tile>,
+            tile_type,
+        ),
+        (3, 3) => (
+            Box::new(Extractor {
+                position,
+                direction,
+                extractor_type: ExtractorType::Electrine,
+            }) as Box<dyn Tile>,
+            tile_type,
+        ),
+        (4, 1) => (
+            Box::new(Portal {
+                position,
+                item: None,
+            }) as Box<dyn Tile>,
+            tile_type,
+        ),
+        (5, 1) => (
+            Box::new(Storage {
+                position,
+                direction,
+                inventory: HashMap::new(),
+                storage_type: StorageType::SmallVault,
+            }) as Box<dyn Tile>,
+            tile_type,
+        ),
+        _ => (
+            Box::new(Conveyor {
+                position,
+                direction,
+                item: None,
+            }) as Box<dyn Tile>,
+            tile_type,
+        ),
     }
 }
 
@@ -1778,5 +2021,7 @@ fn move_camera(
     if keyboard_input.pressed(KeyCode::KeyD) {
         direction.x = 1.0;
     }
-    camera.single_mut().translation += direction.normalize_or_zero().extend(0.0) * CAMERA_SPEED;
+    if let Ok(mut camera) = camera.single_mut() {
+        camera.translation += direction.normalize_or_zero().extend(0.0) * CAMERA_SPEED;
+    }
 }
