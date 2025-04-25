@@ -6,6 +6,7 @@ use bevy::{
     window::PrimaryWindow,
 };
 use bevy_embedded_assets::{EmbeddedAssetPlugin, PluginMode};
+use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
 use bincode::{Decode, Encode, config};
 use flate2::{Compression, read::DeflateDecoder, write::DeflateEncoder};
 use noise::{NoiseFn, Perlin};
@@ -961,6 +962,10 @@ fn main() {
             EmbeddedAssetPlugin {
                 mode: PluginMode::AutoLoad,
             },
+            EguiPlugin {
+                enable_multipass_for_primary_context: true,
+            },
+            WorldInspectorPlugin::new(),
         ))
         .insert_resource(WorldRes::default())
         .insert_resource(Placer::default())
@@ -1546,6 +1551,7 @@ fn tick_tiles(
 
                         if can_accept {
                             filled_positions.remove(start);
+                            empty_positions.insert(*start);
 
                             let start_pos = Vec3::new(
                                 start.x as f32 * TILE_SIZE,
@@ -1587,8 +1593,11 @@ fn tick_tiles(
                                     if let Some(conveyor) =
                                         tile.0.as_any().downcast_ref::<Conveyor>()
                                     {
-                                        if !filled_positions.contains(&end_position) {
-                                            filled_positions.remove(position);
+                                        if !filled_positions.contains(&end_position)
+                                            && empty_positions.contains(&end_position)
+                                        {
+                                            filled_positions.insert(end_position);
+                                            empty_positions.remove(&end_position);
 
                                             let start_pos = Vec3::new(
                                                 position.x as f32 * TILE_SIZE,
@@ -1635,8 +1644,11 @@ fn tick_tiles(
                             if let Some(tiles) = world.tiles.get(&end_position) {
                                 if let Some(conveyor) = tiles.0.as_any().downcast_ref::<Conveyor>()
                                 {
-                                    if !filled_positions.contains(&end_position) {
-                                        filled_positions.remove(position);
+                                    if !filled_positions.contains(&end_position)
+                                        && empty_positions.contains(&end_position)
+                                    {
+                                        filled_positions.insert(end_position);
+                                        empty_positions.remove(&end_position);
                                         let start_pos = Vec3::new(
                                             position.x as f32 * TILE_SIZE,
                                             position.y as f32 * TILE_SIZE,
@@ -2189,6 +2201,7 @@ fn manage_tiles(
                                         scale: Vec3::splat(TILE_SIZE / IMAGE_SIZE),
                                         ..Default::default()
                                     },
+                                    Name::new(format!("({}, {})", tile_type.0, tile_type.1)),
                                     TileSprite { pos },
                                 ))
                                 .with_children(|parent| {
