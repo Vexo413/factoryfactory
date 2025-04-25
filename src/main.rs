@@ -1379,15 +1379,34 @@ fn tick_tiles(
         world.actions = sort_moves_topologically(next);
         world.actions.reverse();
 
-        let mut moved: Vec<Position> = Vec::new();
+        // Track which positions will receive an item (destination) and
+        // which positions have had their item removed (source)
+        let mut filled_positions: HashSet<Position> = HashSet::new();
+        let mut empty_positions: HashSet<Position> = HashSet::new();
+
+        for (pos, tile) in world.tiles.iter() {
+            if let Some(conveyor) = tile.0.as_any().downcast_ref::<Conveyor>() {
+                if conveyor.item.is_none() {
+                    empty_positions.insert(*pos);
+                }
+            } else if let Some(router) = tile.0.as_any().downcast_ref::<Router>() {
+                if router.item.is_none() {
+                    empty_positions.insert(*pos);
+                }
+            }
+        }
 
         for action in &world.actions {
             match action {
                 Action::Move(start, end, item) => {
                     if let Some(tile) = world.tiles.get(end) {
                         if let Some(end_conveyor) = tile.0.as_any().downcast_ref::<Conveyor>() {
-                            if end_conveyor.item.is_none() || moved.contains(end) {
-                                moved.push(*start);
+                            if !filled_positions.contains(end) && empty_positions.contains(end) {
+                                filled_positions.insert(*end);
+                                empty_positions.remove(end);
+
+                                filled_positions.remove(start);
+                                empty_positions.insert(*start);
 
                                 let start_pos = Vec3::new(
                                     start.x as f32 * TILE_SIZE,
@@ -1414,8 +1433,12 @@ fn tick_tiles(
                                 ));
                             }
                         } else if let Some(end_router) = tile.0.as_any().downcast_ref::<Router>() {
-                            if end_router.item.is_none() || moved.contains(end) {
-                                moved.push(*start);
+                            if !filled_positions.contains(end) && empty_positions.contains(end) {
+                                filled_positions.insert(*end);
+                                empty_positions.remove(end);
+
+                                filled_positions.remove(start);
+                                empty_positions.insert(*start);
 
                                 let start_pos = Vec3::new(
                                     start.x as f32 * TILE_SIZE,
@@ -1445,7 +1468,8 @@ fn tick_tiles(
                             if factory.factory_type.capacity().get(item).unwrap_or(&0_u32)
                                 > factory.inventory.get(item).unwrap_or(&0_u32)
                             {
-                                moved.push(*start);
+                                filled_positions.remove(start);
+                                empty_positions.insert(*start);
 
                                 let start_pos = Vec3::new(
                                     start.x as f32 * TILE_SIZE,
@@ -1473,7 +1497,8 @@ fn tick_tiles(
                             }
                         } else if let Some(end_portal) = tile.0.as_any().downcast_ref::<Portal>() {
                             if end_portal.item.is_none() {
-                                moved.push(*start);
+                                filled_positions.remove(start);
+                                empty_positions.insert(*start);
 
                                 let start_pos = Vec3::new(
                                     start.x as f32 * TILE_SIZE,
@@ -1507,9 +1532,9 @@ fn tick_tiles(
                         let can_accept = if let Some(conveyor) =
                             tile.0.as_any().downcast_ref::<Conveyor>()
                         {
-                            conveyor.item.is_none() || moved.contains(end)
+                            !filled_positions.contains(end) && empty_positions.contains(end)
                         } else if let Some(router) = tile.0.as_any().downcast_ref::<Router>() {
-                            router.item.is_none() || moved.contains(end)
+                            !filled_positions.contains(end) && empty_positions.contains(end)
                         } else if let Some(factory) = tile.0.as_any().downcast_ref::<Factory>() {
                             factory.factory_type.capacity().get(item).unwrap_or(&0_u32)
                                 > factory.inventory.get(item).unwrap_or(&0_u32)
@@ -1520,7 +1545,7 @@ fn tick_tiles(
                         };
 
                         if can_accept {
-                            moved.push(*start);
+                            filled_positions.remove(start);
 
                             let start_pos = Vec3::new(
                                 start.x as f32 * TILE_SIZE,
@@ -1562,9 +1587,8 @@ fn tick_tiles(
                                     if let Some(conveyor) =
                                         tile.0.as_any().downcast_ref::<Conveyor>()
                                     {
-                                        if conveyor.item.is_none() || moved.contains(&end_position)
-                                        {
-                                            moved.push(*position);
+                                        if !filled_positions.contains(&end_position) {
+                                            filled_positions.remove(position);
 
                                             let start_pos = Vec3::new(
                                                 position.x as f32 * TILE_SIZE,
@@ -1611,8 +1635,8 @@ fn tick_tiles(
                             if let Some(tiles) = world.tiles.get(&end_position) {
                                 if let Some(conveyor) = tiles.0.as_any().downcast_ref::<Conveyor>()
                                 {
-                                    if conveyor.item.is_none() || moved.contains(&end_position) {
-                                        moved.push(*position);
+                                    if !filled_positions.contains(&end_position) {
+                                        filled_positions.remove(position);
                                         let start_pos = Vec3::new(
                                             position.x as f32 * TILE_SIZE,
                                             position.y as f32 * TILE_SIZE,
