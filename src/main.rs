@@ -763,7 +763,39 @@ impl Tile for Extractor {
         if world.tick_count % self.extractor_type.interval() == 0
             && world.terrain.get(&self.position) == Some(&self.extractor_type.terrain())
         {
-            return Some(Action::Produce(self.position));
+            let mut end_position = self.position;
+            match self.direction {
+                Direction::Up => end_position.y += 1,
+                Direction::Down => end_position.y -= 1,
+                Direction::Left => end_position.x -= 1,
+                Direction::Right => end_position.x += 1,
+            }
+
+            if let Some(tile) = world.tiles.get(&end_position) {
+                let extracted_item = self.extractor_type.spawn_item().unwrap();
+
+                let can_output = if let Some(conveyor) = tile.0.as_any().downcast_ref::<Conveyor>()
+                {
+                    conveyor.item.is_none()
+                } else if let Some(router) = tile.0.as_any().downcast_ref::<Router>() {
+                    router.item.is_none()
+                } else if let Some(storage) = tile.0.as_any().downcast_ref::<Storage>() {
+                    storage
+                        .storage_type
+                        .capacity()
+                        .get(&extracted_item)
+                        .unwrap_or(&0)
+                        > storage.inventory.get(&extracted_item).unwrap_or(&0)
+                } else if let Some(portal) = tile.0.as_any().downcast_ref::<Portal>() {
+                    portal.item.is_none()
+                } else {
+                    false
+                };
+
+                if can_output {
+                    return Some(Action::Produce(self.position));
+                }
+            }
         }
         None
     }
@@ -829,8 +861,29 @@ impl Tile for Factory {
             Direction::Right => end_position.x += 1,
         }
         if let Some(tile) = world.tiles.get(&end_position) {
-            if let Some(conveyor) = tile.0.as_any().downcast_ref::<Conveyor>() {
-                if self.can_produce() && conveyor.item.is_none() {
+            // Check if the factory can produce and if the destination can accept an item
+            if self.can_produce() {
+                let produced_item = self.get_produce_item().unwrap();
+
+                let can_output = if let Some(conveyor) = tile.0.as_any().downcast_ref::<Conveyor>()
+                {
+                    conveyor.item.is_none()
+                } else if let Some(router) = tile.0.as_any().downcast_ref::<Router>() {
+                    router.item.is_none()
+                } else if let Some(storage) = tile.0.as_any().downcast_ref::<Storage>() {
+                    storage
+                        .storage_type
+                        .capacity()
+                        .get(&produced_item)
+                        .unwrap_or(&0)
+                        > storage.inventory.get(&produced_item).unwrap_or(&0)
+                } else if let Some(portal) = tile.0.as_any().downcast_ref::<Portal>() {
+                    portal.item.is_none()
+                } else {
+                    false
+                };
+
+                if can_output {
                     return Some(Action::Produce(self.position));
                 }
             }
@@ -1325,18 +1378,43 @@ fn tick_tiles(
                                     Direction::Right => end_position.x += 1,
                                 }
 
-                                if let Some(tile) = world.tiles.get_mut(&end_position) {
+                                if let Some(target_tile) = world.tiles.get_mut(&end_position) {
+                                    // Handle different types of destination tiles
                                     if let Some(conveyor) =
-                                        tile.0.as_any_mut().downcast_mut::<Conveyor>()
+                                        target_tile.0.as_any_mut().downcast_mut::<Conveyor>()
                                     {
                                         if conveyor.item.is_none() {
                                             conveyor.item = Some(produced_item);
                                         }
+                                    } else if let Some(router) =
+                                        target_tile.0.as_any_mut().downcast_mut::<Router>()
+                                    {
+                                        if router.item.is_none() {
+                                            router.item = Some(produced_item);
+                                        }
+                                    } else if let Some(storage) =
+                                        target_tile.0.as_any_mut().downcast_mut::<Storage>()
+                                    {
+                                        if storage
+                                            .storage_type
+                                            .capacity()
+                                            .get(&produced_item)
+                                            .unwrap_or(&0)
+                                            > storage.inventory.get(&produced_item).unwrap_or(&0)
+                                        {
+                                            *storage.inventory.entry(produced_item).or_insert(0) +=
+                                                1;
+                                        }
+                                    } else if let Some(portal) =
+                                        target_tile.0.as_any_mut().downcast_mut::<Portal>()
+                                    {
+                                        if portal.item.is_none() {
+                                            portal.item = Some(produced_item);
+                                        }
                                     }
                                 }
                             }
-                        } else if let Some(extractor) =
-                            tile.0.as_any_mut().downcast_mut::<Extractor>()
+                        } else if let Some(extractor) = tile.0.as_any().downcast_ref::<Extractor>()
                         {
                             let mut end_position = extractor.position;
                             let item = extractor.extractor_type.spawn_item();
@@ -1347,12 +1425,43 @@ fn tick_tiles(
                                 Direction::Right => end_position.x += 1,
                             }
 
-                            if let Some(tiles) = world.tiles.get_mut(&end_position) {
+                            if let Some(target_tile) = world.tiles.get_mut(&end_position) {
+                                // Handle different types of destination tiles
                                 if let Some(conveyor) =
-                                    tiles.0.as_any_mut().downcast_mut::<Conveyor>()
+                                    target_tile.0.as_any_mut().downcast_mut::<Conveyor>()
                                 {
                                     if conveyor.item.is_none() {
                                         conveyor.item = item;
+                                    }
+                                } else if let Some(router) =
+                                    target_tile.0.as_any_mut().downcast_mut::<Router>()
+                                {
+                                    if router.item.is_none() {
+                                        router.item = item;
+                                    }
+                                } else if let Some(storage) =
+                                    target_tile.0.as_any_mut().downcast_mut::<Storage>()
+                                {
+                                    if storage
+                                        .storage_type
+                                        .capacity()
+                                        .get(&item.unwrap_or(Item::Rigtorium))
+                                        .unwrap_or(&0)
+                                        > storage
+                                            .inventory
+                                            .get(&item.unwrap_or(Item::Rigtorium))
+                                            .unwrap_or(&0)
+                                    {
+                                        *storage
+                                            .inventory
+                                            .entry(item.unwrap_or(Item::Rigtorium))
+                                            .or_insert(0) += 1;
+                                    }
+                                } else if let Some(portal) =
+                                    target_tile.0.as_any_mut().downcast_mut::<Portal>()
+                                {
+                                    if portal.item.is_none() {
+                                        portal.item = item;
                                     }
                                 }
                             }
@@ -1589,66 +1698,50 @@ fn tick_tiles(
                                     Direction::Right => end_position.x += 1,
                                 }
 
-                                if let Some(tile) = world.tiles.get(&end_position) {
-                                    if let Some(conveyor) =
-                                        tile.0.as_any().downcast_ref::<Conveyor>()
+                                if let Some(target_tile) = world.tiles.get(&end_position) {
+                                    let can_accept = if let Some(conveyor) =
+                                        target_tile.0.as_any().downcast_ref::<Conveyor>()
                                     {
-                                        if !filled_positions.contains(&end_position)
+                                        !filled_positions.contains(&end_position)
                                             && empty_positions.contains(&end_position)
+                                    } else if let Some(router) =
+                                        target_tile.0.as_any().downcast_ref::<Router>()
+                                    {
+                                        !filled_positions.contains(&end_position)
+                                            && empty_positions.contains(&end_position)
+                                    } else if let Some(storage) =
+                                        target_tile.0.as_any().downcast_ref::<Storage>()
+                                    {
+                                        storage
+                                            .storage_type
+                                            .capacity()
+                                            .get(&produced_item)
+                                            .unwrap_or(&0)
+                                            > storage.inventory.get(&produced_item).unwrap_or(&0)
+                                    } else if let Some(portal) =
+                                        target_tile.0.as_any().downcast_ref::<Portal>()
+                                    {
+                                        portal.item.is_none()
+                                    } else {
+                                        false
+                                    };
+
+                                    if can_accept {
+                                        // Update position tracking if needed
+                                        if let Some(conveyor) =
+                                            target_tile.0.as_any().downcast_ref::<Conveyor>()
                                         {
                                             filled_positions.insert(end_position);
                                             empty_positions.remove(&end_position);
-
-                                            let start_pos = Vec3::new(
-                                                position.x as f32 * TILE_SIZE,
-                                                position.y as f32 * TILE_SIZE,
-                                                1.0,
-                                            );
-                                            let end_pos = Vec3::new(
-                                                end_position.x as f32 * TILE_SIZE,
-                                                end_position.y as f32 * TILE_SIZE,
-                                                1.0,
-                                            );
-                                            commands.spawn((
-                                                ItemAnimation {
-                                                    start_pos,
-                                                    end_pos,
-                                                    timer: Timer::from_seconds(
-                                                        TICK_LENGTH,
-                                                        TimerMode::Once,
-                                                    ),
-                                                },
-                                                Sprite::from_image(
-                                                    asset_server.load(produced_item.sprite()),
-                                                ),
-                                                Transform {
-                                                    translation: start_pos,
-                                                    scale: Vec3::splat(ITEM_SIZE / IMAGE_SIZE),
-                                                    ..Default::default()
-                                                },
-                                            ));
                                         }
-                                    }
-                                }
-                            }
-                        } else if let Some(extractor) = tile.0.as_any().downcast_ref::<Extractor>()
-                        {
-                            let mut end_position = extractor.position;
-                            let item = extractor.extractor_type.spawn_item();
-                            match extractor.direction {
-                                Direction::Up => end_position.y += 1,
-                                Direction::Down => end_position.y -= 1,
-                                Direction::Left => end_position.x -= 1,
-                                Direction::Right => end_position.x += 1,
-                            }
-                            if let Some(tiles) = world.tiles.get(&end_position) {
-                                if let Some(conveyor) = tiles.0.as_any().downcast_ref::<Conveyor>()
-                                {
-                                    if !filled_positions.contains(&end_position)
-                                        && empty_positions.contains(&end_position)
-                                    {
-                                        filled_positions.insert(end_position);
-                                        empty_positions.remove(&end_position);
+                                        if let Some(router) =
+                                            target_tile.0.as_any().downcast_ref::<Router>()
+                                        {
+                                            filled_positions.insert(end_position);
+                                            empty_positions.remove(&end_position);
+                                        }
+
+                                        // Create the animation
                                         let start_pos = Vec3::new(
                                             position.x as f32 * TILE_SIZE,
                                             position.y as f32 * TILE_SIZE,
@@ -1668,11 +1761,9 @@ fn tick_tiles(
                                                     TimerMode::Once,
                                                 ),
                                             },
-                                            Sprite::from_image(if let Some(unwraped_item) = item {
-                                                asset_server.load(unwraped_item.sprite())
-                                            } else {
-                                                asset_server.load("textures/items/none.png")
-                                            }),
+                                            Sprite::from_image(
+                                                asset_server.load(produced_item.sprite()),
+                                            ),
                                             Transform {
                                                 translation: start_pos,
                                                 scale: Vec3::splat(ITEM_SIZE / IMAGE_SIZE),
@@ -1680,6 +1771,94 @@ fn tick_tiles(
                                             },
                                         ));
                                     }
+                                }
+                            }
+                        } else if let Some(extractor) = tile.0.as_any().downcast_ref::<Extractor>()
+                        {
+                            let mut end_position = extractor.position;
+                            let item = extractor.extractor_type.spawn_item();
+                            match extractor.direction {
+                                Direction::Up => end_position.y += 1,
+                                Direction::Down => end_position.y -= 1,
+                                Direction::Left => end_position.x -= 1,
+                                Direction::Right => end_position.x += 1,
+                            }
+                            if let Some(target_tile) = world.tiles.get(&end_position) {
+                                let can_accept = if let Some(conveyor) =
+                                    target_tile.0.as_any().downcast_ref::<Conveyor>()
+                                {
+                                    !filled_positions.contains(&end_position)
+                                        && empty_positions.contains(&end_position)
+                                } else if let Some(router) =
+                                    target_tile.0.as_any().downcast_ref::<Router>()
+                                {
+                                    !filled_positions.contains(&end_position)
+                                        && empty_positions.contains(&end_position)
+                                } else if let Some(storage) =
+                                    target_tile.0.as_any().downcast_ref::<Storage>()
+                                {
+                                    storage
+                                        .storage_type
+                                        .capacity()
+                                        .get(&item.unwrap_or(Item::Rigtorium))
+                                        .unwrap_or(&0)
+                                        > storage
+                                            .inventory
+                                            .get(&item.unwrap_or(Item::Rigtorium))
+                                            .unwrap_or(&0)
+                                } else if let Some(portal) =
+                                    target_tile.0.as_any().downcast_ref::<Portal>()
+                                {
+                                    portal.item.is_none()
+                                } else {
+                                    false
+                                };
+
+                                if can_accept {
+                                    // Update position tracking if needed
+                                    if let Some(conveyor) =
+                                        target_tile.0.as_any().downcast_ref::<Conveyor>()
+                                    {
+                                        filled_positions.insert(end_position);
+                                        empty_positions.remove(&end_position);
+                                    }
+                                    if let Some(router) =
+                                        target_tile.0.as_any().downcast_ref::<Router>()
+                                    {
+                                        filled_positions.insert(end_position);
+                                        empty_positions.remove(&end_position);
+                                    }
+
+                                    // Create the animation
+                                    let start_pos = Vec3::new(
+                                        position.x as f32 * TILE_SIZE,
+                                        position.y as f32 * TILE_SIZE,
+                                        1.0,
+                                    );
+                                    let end_pos = Vec3::new(
+                                        end_position.x as f32 * TILE_SIZE,
+                                        end_position.y as f32 * TILE_SIZE,
+                                        1.0,
+                                    );
+                                    commands.spawn((
+                                        ItemAnimation {
+                                            start_pos,
+                                            end_pos,
+                                            timer: Timer::from_seconds(
+                                                TICK_LENGTH,
+                                                TimerMode::Once,
+                                            ),
+                                        },
+                                        Sprite::from_image(
+                                            asset_server
+                                                .load(item.unwrap_or(Item::Rigtorium).sprite()),
+                                        ),
+                                        Transform {
+                                            translation: start_pos,
+                                            scale: Vec3::splat(ITEM_SIZE / IMAGE_SIZE),
+                                            ..Default::default()
+                                        },
+                                    ));
                                 }
                             }
                         }
