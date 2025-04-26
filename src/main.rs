@@ -1,8 +1,8 @@
 use bevy::{
     color::palettes::css,
+    core_pipeline::bloom::{Bloom, BloomCompositeMode},
     input::mouse::MouseWheel,
     prelude::*,
-    //render::render_resource::{Extent3d, TextureDimension, TextureFormat},
     window::PrimaryWindow,
 };
 use bevy_embedded_assets::{EmbeddedAssetPlugin, PluginMode};
@@ -112,6 +112,10 @@ enum SerializableTile {
         direction: Direction,
         inventory: HashMap<Item, u32>,
         storage_type: StorageType,
+    },
+    Portal {
+        position: Position,
+        item: Option<Item>,
     },
     // todo: add portal
 }
@@ -369,6 +373,11 @@ impl WorldRes {
                                 factory_type: factory.factory_type,
                                 inventory: factory.inventory.clone(),
                             }
+                        } else if let Some(portal) = tile.as_any().downcast_ref::<Portal>() {
+                            SerializableTile::Portal {
+                                position: portal.position,
+                                item: portal.item,
+                            }
                         } else {
                             SerializableTile::Conveyor {
                                 position: *pos,
@@ -468,6 +477,7 @@ impl WorldRes {
                     storage_type,
                     inventory,
                 }),
+                SerializableTile::Portal { position, item } => Box::new(Portal { position, item }),
             };
 
             tiles.insert(pos, (boxed_tile, id));
@@ -732,11 +742,11 @@ impl ExtractorType {
             ExtractorType::Electrine => TerrainTileType::ElectrineDeposit,
         }
     }
-    fn spawn_item(&self) -> Option<Item> {
+    fn spawn_item(&self) -> Item {
         match self {
-            ExtractorType::RawRigtorium => Some(Item::RawRigtorium),
-            ExtractorType::RawFlextorium => Some(Item::RawFlextorium),
-            ExtractorType::Electrine => Some(Item::Electrine),
+            ExtractorType::RawRigtorium => Item::RawRigtorium,
+            ExtractorType::RawFlextorium => Item::RawFlextorium,
+            ExtractorType::Electrine => Item::Electrine,
         }
     }
     fn sprite(&self) -> String {
@@ -772,13 +782,20 @@ impl Tile for Extractor {
             }
 
             if let Some(tile) = world.tiles.get(&end_position) {
-                let extracted_item = self.extractor_type.spawn_item().unwrap();
+                let extracted_item = self.extractor_type.spawn_item();
 
                 let can_output = if let Some(conveyor) = tile.0.as_any().downcast_ref::<Conveyor>()
                 {
                     conveyor.item.is_none()
                 } else if let Some(router) = tile.0.as_any().downcast_ref::<Router>() {
                     router.item.is_none()
+                } else if let Some(factory) = tile.0.as_any().downcast_ref::<Factory>() {
+                    factory
+                        .factory_type
+                        .capacity()
+                        .get(&extracted_item)
+                        .unwrap_or(&0)
+                        > factory.inventory.get(&extracted_item).unwrap_or(&0)
                 } else if let Some(storage) = tile.0.as_any().downcast_ref::<Storage>() {
                     storage
                         .storage_type
@@ -870,6 +887,13 @@ impl Tile for Factory {
                     conveyor.item.is_none()
                 } else if let Some(router) = tile.0.as_any().downcast_ref::<Router>() {
                     router.item.is_none()
+                } else if let Some(factory) = tile.0.as_any().downcast_ref::<Factory>() {
+                    factory
+                        .factory_type
+                        .capacity()
+                        .get(&produced_item)
+                        .unwrap_or(&0)
+                        > factory.inventory.get(&produced_item).unwrap_or(&0)
                 } else if let Some(storage) = tile.0.as_any().downcast_ref::<Storage>() {
                     storage
                         .storage_type
@@ -1405,6 +1429,22 @@ fn tick_tiles(
                                             *storage.inventory.entry(produced_item).or_insert(0) +=
                                                 1;
                                         }
+                                    } else if let Some(factory) =
+                                        target_tile.0.as_any_mut().downcast_mut::<Factory>()
+                                    {
+                                        if factory
+                                            .factory_type
+                                            .capacity()
+                                            .get(&produced_item)
+                                            .unwrap_or(&0_u32)
+                                            > factory
+                                                .inventory
+                                                .get(&produced_item)
+                                                .unwrap_or(&0_u32)
+                                        {
+                                            *factory.inventory.entry(produced_item).or_insert(0) +=
+                                                1;
+                                        }
                                     } else if let Some(portal) =
                                         target_tile.0.as_any_mut().downcast_mut::<Portal>()
                                     {
@@ -1431,37 +1471,35 @@ fn tick_tiles(
                                     target_tile.0.as_any_mut().downcast_mut::<Conveyor>()
                                 {
                                     if conveyor.item.is_none() {
-                                        conveyor.item = item;
+                                        conveyor.item = Some(item);
                                     }
                                 } else if let Some(router) =
                                     target_tile.0.as_any_mut().downcast_mut::<Router>()
                                 {
                                     if router.item.is_none() {
-                                        router.item = item;
+                                        router.item = Some(item);
                                     }
                                 } else if let Some(storage) =
                                     target_tile.0.as_any_mut().downcast_mut::<Storage>()
                                 {
-                                    if storage
-                                        .storage_type
-                                        .capacity()
-                                        .get(&item.unwrap_or(Item::Rigtorium))
-                                        .unwrap_or(&0)
-                                        > storage
-                                            .inventory
-                                            .get(&item.unwrap_or(Item::Rigtorium))
-                                            .unwrap_or(&0)
+                                    if storage.storage_type.capacity().get(&item).unwrap_or(&0)
+                                        > storage.inventory.get(&item).unwrap_or(&0)
                                     {
-                                        *storage
-                                            .inventory
-                                            .entry(item.unwrap_or(Item::Rigtorium))
-                                            .or_insert(0) += 1;
+                                        *storage.inventory.entry(item).or_insert(0) += 1;
+                                    }
+                                } else if let Some(factory) =
+                                    target_tile.0.as_any_mut().downcast_mut::<Factory>()
+                                {
+                                    if factory.factory_type.capacity().get(&item).unwrap_or(&0_u32)
+                                        > factory.inventory.get(&item).unwrap_or(&0_u32)
+                                    {
+                                        *factory.inventory.entry(item).or_insert(0) += 1;
                                     }
                                 } else if let Some(portal) =
                                     target_tile.0.as_any_mut().downcast_mut::<Portal>()
                                 {
                                     if portal.item.is_none() {
-                                        portal.item = item;
+                                        portal.item = Some(item);
                                     }
                                 }
                             }
@@ -1490,7 +1528,7 @@ fn tick_tiles(
             }
         }
 
-        world.actions = sort_moves_topologically(next);
+        world.actions = sort_moves_topologically(next, &world);
         world.actions.reverse();
 
         // Track which positions will receive an item (destination) and
@@ -1797,15 +1835,8 @@ fn tick_tiles(
                                 } else if let Some(storage) =
                                     target_tile.0.as_any().downcast_ref::<Storage>()
                                 {
-                                    storage
-                                        .storage_type
-                                        .capacity()
-                                        .get(&item.unwrap_or(Item::Rigtorium))
-                                        .unwrap_or(&0)
-                                        > storage
-                                            .inventory
-                                            .get(&item.unwrap_or(Item::Rigtorium))
-                                            .unwrap_or(&0)
+                                    storage.storage_type.capacity().get(&item).unwrap_or(&0)
+                                        > storage.inventory.get(&item).unwrap_or(&0)
                                 } else if let Some(portal) =
                                     target_tile.0.as_any().downcast_ref::<Portal>()
                                 {
@@ -1849,10 +1880,7 @@ fn tick_tiles(
                                                 TimerMode::Once,
                                             ),
                                         },
-                                        Sprite::from_image(
-                                            asset_server
-                                                .load(item.unwrap_or(Item::Rigtorium).sprite()),
-                                        ),
+                                        Sprite::from_image(asset_server.load(item.sprite())),
                                         Transform {
                                             translation: start_pos,
                                             scale: Vec3::splat(ITEM_SIZE / IMAGE_SIZE),
@@ -1873,26 +1901,61 @@ fn tick_tiles(
     }
 }
 
-fn sort_moves_topologically(actions: Vec<Action>) -> Vec<Action> {
-    let mut from_map: HashMap<Position, usize> = HashMap::new();
-    for (i, action) in actions.iter().enumerate() {
-        if let Action::Move(from, _, _) = action {
-            from_map.insert(*from, i);
-        }
-    }
+fn sort_moves_topologically(actions: Vec<Action>, world: &WorldRes) -> Vec<Action> {
+    // Map to track which actions are outputting to a specific position
+    let mut position_to_output_action: HashMap<Position, Vec<usize>> = HashMap::new();
 
-    let mut graph: HashMap<usize, Vec<usize>> = HashMap::new();
-    let mut in_degree: HashMap<usize, usize> = HashMap::new();
+    // Map to track which actions are inputting from a specific position
+    let mut position_to_input_action: HashMap<Position, Vec<usize>> = HashMap::new();
 
+    // First pass: identify all positions that actions are operating on
     for (i, action) in actions.iter().enumerate() {
-        if let Action::Move(_, to, _) = action {
-            if let Some(&dep) = from_map.get(to) {
-                graph.entry(i).or_default().push(dep);
-                *in_degree.entry(dep).or_insert(0) += 1;
+        match action {
+            Action::Move(from, to, _) => {
+                position_to_output_action.entry(*from).or_default().push(i);
+                position_to_input_action.entry(*to).or_default().push(i);
+            }
+            Action::MoveRouter(from, to, _, _) => {
+                position_to_output_action.entry(*from).or_default().push(i);
+                position_to_input_action.entry(*to).or_default().push(i);
+            }
+            Action::Produce(pos) => {
+                // Get destination position for this produce action
+                if let Some((_, destination)) = get_produce_destination(*pos, world) {
+                    position_to_output_action.entry(*pos).or_default().push(i);
+                    position_to_input_action
+                        .entry(destination)
+                        .or_default()
+                        .push(i);
+                }
+            }
+            Action::Teleport(pos, _) => {
+                position_to_output_action.entry(*pos).or_default().push(i);
+                // No specific input position for teleport
             }
         }
     }
 
+    // Build dependency graph
+    let mut graph: HashMap<usize, Vec<usize>> = HashMap::new();
+    let mut in_degree: HashMap<usize, usize> = HashMap::new();
+
+    // An action that outputs to a position should be executed before actions that input from that position
+    for (pos, output_actions) in &position_to_output_action {
+        if let Some(input_actions) = position_to_input_action.get(pos) {
+            for &output_action in output_actions {
+                for &input_action in input_actions {
+                    if output_action != input_action {
+                        // Avoid self-dependencies
+                        graph.entry(input_action).or_default().push(output_action);
+                        *in_degree.entry(output_action).or_insert(0) += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    // Topological sort (unchanged from your original function)
     let mut queue: Vec<usize> = (0..actions.len())
         .filter(|i| !in_degree.contains_key(i))
         .collect();
@@ -1915,6 +1978,7 @@ fn sort_moves_topologically(actions: Vec<Action>) -> Vec<Action> {
         }
     }
 
+    // Handle any remaining actions
     for (i, action) in actions.iter().enumerate() {
         if !visited.contains(&i) {
             sorted.push(action.clone());
@@ -1924,6 +1988,30 @@ fn sort_moves_topologically(actions: Vec<Action>) -> Vec<Action> {
     sorted
 }
 
+fn get_produce_destination(pos: Position, world: &WorldRes) -> Option<(Position, Position)> {
+    if let Some((tile, _)) = world.tiles.get(&pos) {
+        let mut end_position = pos;
+
+        if let Some(factory) = tile.as_any().downcast_ref::<Factory>() {
+            match factory.direction {
+                Direction::Up => end_position.y += 1,
+                Direction::Down => end_position.y -= 1,
+                Direction::Left => end_position.x -= 1,
+                Direction::Right => end_position.x += 1,
+            }
+            return Some((pos, end_position));
+        } else if let Some(extractor) = tile.as_any().downcast_ref::<Extractor>() {
+            match extractor.direction {
+                Direction::Up => end_position.y += 1,
+                Direction::Down => end_position.y -= 1,
+                Direction::Left => end_position.x -= 1,
+                Direction::Right => end_position.x += 1,
+            }
+            return Some((pos, end_position));
+        }
+    }
+    None
+}
 fn update_tile_visuals(
     world: Res<WorldRes>,
     mut parent_query: Query<(Entity, &TileSprite, &mut Transform, &mut Sprite)>,
