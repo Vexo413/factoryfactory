@@ -1,10 +1,4 @@
-use bevy::{
-    color::palettes::css,
-    core_pipeline::bloom::{Bloom, BloomCompositeMode},
-    input::mouse::MouseWheel,
-    prelude::*,
-    window::PrimaryWindow,
-};
+use bevy::{color::palettes::css, input::mouse::MouseWheel, prelude::*, window::PrimaryWindow};
 use bevy_embedded_assets::{EmbeddedAssetPlugin, PluginMode};
 use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
 use bincode::{Decode, Encode, config};
