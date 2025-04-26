@@ -20,27 +20,23 @@ const ITEM_SIZE: f32 = 32.0;
 const IMAGE_SIZE: f32 = 128.0;
 const TICK_LENGTH: f32 = 1.0;
 const CAMERA_SPEED: f32 = 10.0;
-// Add these constants at the top of your file with the other constants
-const TERRAIN_GEN_RANGE: i32 = 200; // How far to generate terrain (±20)
-const TERRAIN_BASE_THRESHOLD: f64 = 0.4; // Base threshold for resource generation
 
-// Scale determines the size of clusters - smaller values = larger clusters
-const RIGTORIUM_NOISE_SCALE: f64 = 0.15; // Rigtorium cluster size
-const FLEXTORIUM_NOISE_SCALE: f64 = 0.15; // Flextorium cluster size
-const ELECTRINE_NOISE_SCALE: f64 = 0.4; // Electrine cluster size
+const TERRAIN_GEN_RANGE: i32 = 200;
+const TERRAIN_BASE_THRESHOLD: f64 = 0.4;
 
-// Density affects how common each resource is (higher = more common)
-const RIGTORIUM_DENSITY: f64 = -0.2; // Additional bias for Rigtorium
-const FLEXTORIUM_DENSITY: f64 = -0.3; // Additional bias for Flextorium
-const ELECTRINE_DENSITY: f64 = -0.4; // Additional bias for Electrine
+const RIGTORIUM_NOISE_SCALE: f64 = 0.15;
+const FLEXTORIUM_NOISE_SCALE: f64 = 0.15;
+const ELECTRINE_NOISE_SCALE: f64 = 0.4;
+
+const RIGTORIUM_DENSITY: f64 = -0.2;
+const FLEXTORIUM_DENSITY: f64 = -0.3;
+const ELECTRINE_DENSITY: f64 = -0.4;
 
 const CHUNK_SIZE: i32 = 16;
 
 const MIN_ZOOM: f32 = 0.1;
 const MAX_ZOOM: f32 = 3.0;
 const ZOOM_SPEED: f32 = 0.0001;
-
-const TEXTURE_SIZE: u32 = 128; // Size of each tile texture
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct ChunkPosition {
@@ -53,15 +49,6 @@ impl ChunkPosition {
         Self { x, y }
     }
 
-    // Get world position from chunk position
-    fn to_world_position(&self) -> Vec2 {
-        Vec2::new(
-            self.x as f32 * CHUNK_SIZE as f32 * TILE_SIZE,
-            self.y as f32 * CHUNK_SIZE as f32 * TILE_SIZE,
-        )
-    }
-
-    // Get chunk position from world position
     fn from_world_position(world_pos: Vec2) -> Self {
         Self {
             x: (world_pos.x / (CHUNK_SIZE as f32 * TILE_SIZE)).floor() as i32,
@@ -70,7 +57,6 @@ impl ChunkPosition {
     }
 }
 
-// Define a component to identify chunk entities
 #[derive(Component)]
 struct TerrainChunk {
     position: ChunkPosition,
@@ -111,7 +97,6 @@ enum SerializableTile {
         position: Position,
         item: Option<Item>,
     },
-    // todo: add portal
 }
 
 #[derive(Serialize, Deserialize, Encode, Decode)]
@@ -139,7 +124,6 @@ enum Direction {
 
 impl Direction {
     fn shift(&self, i: i32) -> Direction {
-        // Convert direction to index (0-3, clockwise order)
         let current_index = match self {
             Direction::Up => 0,
             Direction::Right => 1,
@@ -147,16 +131,14 @@ impl Direction {
             Direction::Left => 3,
         };
 
-        // Calculate new index with wrapping
         let new_index = (current_index + i).rem_euclid(4);
 
-        // Convert back to Direction
         match new_index {
             0 => Direction::Up,
             1 => Direction::Right,
             2 => Direction::Down,
             3 => Direction::Left,
-            _ => unreachable!(), // This should never happen due to rem_euclid
+            _ => unreachable!(),
         }
     }
 }
@@ -307,7 +289,7 @@ struct Placer {
     direction: Direction,
     tile_type: (u32, u32),
     preview_entity: Option<Entity>,
-    zoom_level: f32, // Add this field to track camera zoom
+    zoom_level: f32,
 }
 
 impl Default for Placer {
@@ -316,7 +298,7 @@ impl Default for Placer {
             direction: Direction::Up,
             tile_type: (1, 1),
             preview_entity: None,
-            zoom_level: 1.0, // Default zoom level (1.0 = 100%)
+            zoom_level: 1.0,
         }
     }
 }
@@ -478,7 +460,6 @@ impl WorldRes {
         }
 
         if terrain.is_empty() {
-            // Create separate noise generators for each resource type
             let seed = serializable_world.world_seed;
             let rigtorium_noise = Perlin::new(seed);
             let flextorium_noise = Perlin::new(seed.wrapping_add(1));
@@ -486,7 +467,6 @@ impl WorldRes {
 
             for x in -TERRAIN_GEN_RANGE..=TERRAIN_GEN_RANGE {
                 for y in -TERRAIN_GEN_RANGE..=TERRAIN_GEN_RANGE {
-                    // Calculate separate noise values with different scales for each resource type
                     let rigtorium_val = rigtorium_noise.get([
                         x as f64 * RIGTORIUM_NOISE_SCALE,
                         y as f64 * RIGTORIUM_NOISE_SCALE,
@@ -502,7 +482,6 @@ impl WorldRes {
                         y as f64 * ELECTRINE_NOISE_SCALE,
                     ]) + ELECTRINE_DENSITY;
 
-                    // Determine terrain type based on highest noise value that exceeds threshold
                     let terrain_type = if rigtorium_val > TERRAIN_BASE_THRESHOLD
                         && rigtorium_val > flextorium_val
                         && rigtorium_val > electrine_val
@@ -519,7 +498,7 @@ impl WorldRes {
                     {
                         TerrainTileType::ElectrineDeposit
                     } else {
-                        TerrainTileType::Stone // Default is stone
+                        TerrainTileType::Stone
                     };
 
                     terrain.insert(Position::new(x, y), terrain_type);
@@ -652,17 +631,15 @@ struct Router {
     position: Position,
     direction: Direction,
     item: Option<Item>,
-    last_output: RouterOutputIndex, // Tracks the last used output
+    last_output: RouterOutputIndex,
 }
 
 impl Tile for Router {
     fn tick(&self, world: &WorldRes) -> Option<Action> {
         if let Some(item) = self.item {
-            // Start with the next position after the last one used
             let mut next_output = self.last_output.next();
             let start_position = self.position;
 
-            // We'll try all three possible outputs, starting from next_output
             for _ in 0..3 {
                 let dir = next_output.to_direction(self.direction);
                 let mut end_pos = self.position;
@@ -675,7 +652,6 @@ impl Tile for Router {
                 }
 
                 if let Some(tile) = world.tiles.get(&end_pos) {
-                    // Check if the destination tile can accept an item
                     let can_accept =
                         if let Some(conveyor) = tile.0.as_any().downcast_ref::<Conveyor>() {
                             conveyor.item.is_none()
@@ -689,7 +665,6 @@ impl Tile for Router {
                         };
 
                     if can_accept {
-                        // Return the action with updated last_output
                         return Some(Action::MoveRouter(
                             start_position,
                             end_pos,
@@ -699,7 +674,6 @@ impl Tile for Router {
                     }
                 }
 
-                // Try the next output direction
                 next_output = next_output.next();
             }
         }
@@ -872,7 +846,6 @@ impl Tile for Factory {
             Direction::Right => end_position.x += 1,
         }
         if let Some(tile) = world.tiles.get(&end_position) {
-            // Check if the factory can produce and if the destination can accept an item
             if self.can_produce() {
                 let produced_item = self.get_produce_item().unwrap();
 
@@ -1021,9 +994,9 @@ fn main() {
                     title: "Factory Factory".into(),
                     name: Some("factoyfactory.app".into()),
                     resolution: (1280.0, 720.0).into(),
-                    // Tells Wasm to resize the window according to the available canvas
+
                     fit_canvas_to_parent: true,
-                    // Tells Wasm not to override default event handling, like F5, Ctrl+R etc.
+
                     prevent_default_event_handling: false,
 
                     ..default()
@@ -1133,20 +1106,13 @@ fn manage_terrain_chunks(
     if let Ok(camera_transform) = camera_query.single() {
         let camera_pos = camera_transform.translation.truncate();
 
-        // Calculate chunk radius based on zoom level
-        // Inverse relationship - lower zoom_level = more chunks
-        // Base number of chunks at zoom=1.0 is 2 (covers enough of screen at default zoom)
         let base_chunk_radius = 2;
         let zoom_factor = 1.0 / placer.zoom_level;
 
-        // Add 1 to ensure we always have at least 1 chunk radius
-        // Round up to ensure we cover the screen edges
         let chunks_radius = (base_chunk_radius as f32 * zoom_factor).ceil() as i32;
 
-        // Get the chunk the camera is in
         let camera_chunk = ChunkPosition::from_world_position(camera_pos);
 
-        // Calculate which chunks should be visible using the dynamic radius
         let mut visible_chunks = HashSet::new();
         for x in (camera_chunk.x - chunks_radius)..(camera_chunk.x + chunks_radius + 1) {
             for y in (camera_chunk.y - chunks_radius)..(camera_chunk.y + chunks_radius + 1) {
@@ -1154,7 +1120,6 @@ fn manage_terrain_chunks(
             }
         }
 
-        // Unload chunks that are no longer visible
         let mut chunks_to_unload = HashSet::new();
         for &loaded_chunk in &world.loaded_chunks {
             if !visible_chunks.contains(&loaded_chunk) {
@@ -1163,7 +1128,6 @@ fn manage_terrain_chunks(
         }
 
         for chunk_pos in &chunks_to_unload {
-            // Find and despawn the chunk entity
             for (entity, chunk) in &chunk_query {
                 if chunk.position == *chunk_pos {
                     commands.entity(entity).despawn();
@@ -1173,18 +1137,12 @@ fn manage_terrain_chunks(
             world.loaded_chunks.remove(chunk_pos);
         }
 
-        // Load new chunks that have become visible
         for chunk_pos in &visible_chunks {
             if !world.loaded_chunks.contains(chunk_pos) {
-                // Generate and spawn the chunk
                 generate_chunk(&mut commands, &mut world, *chunk_pos, &asset_server);
                 world.loaded_chunks.insert(*chunk_pos);
             }
         }
-
-        // Debug info - can be removed
-        // println!("Zoom level: {}, Chunks radius: {}, Visible chunks: {}",
-        //    placer.zoom_level, chunks_radius, visible_chunks.len());
     }
 }
 
@@ -1194,13 +1152,11 @@ fn generate_chunk(
     chunk_pos: ChunkPosition,
     asset_server: &AssetServer,
 ) {
-    // Create a parent entity for the chunk with a proper SpatialBundle
     let chunk_entity = commands
         .spawn((
             TerrainChunk {
                 position: chunk_pos,
             },
-            // Adding a SpatialBundle with the correct transform for the chunk
             Visibility::Visible,
             Transform::from_translation(Vec3::new(
                 chunk_pos.x as f32 * CHUNK_SIZE as f32 * TILE_SIZE,
@@ -1210,23 +1166,18 @@ fn generate_chunk(
         ))
         .id();
 
-    // Generate terrain for all tiles in the chunk
     let seed = world.world_seed;
     let rigtorium_noise = Perlin::new(seed);
     let flextorium_noise = Perlin::new(seed.wrapping_add(1));
     let electrine_noise = Perlin::new(seed.wrapping_add(2));
 
-    // Spawn all the terrain tiles as children of the chunk entity
     commands.entity(chunk_entity).with_children(|parent| {
         for x in 0..CHUNK_SIZE {
             for y in 0..CHUNK_SIZE {
-                // Calculate world position for this tile
                 let world_x = chunk_pos.x * CHUNK_SIZE + x;
                 let world_y = chunk_pos.y * CHUNK_SIZE + y;
                 let pos = Position::new(world_x, world_y);
 
-                // Calculate noise values and determine terrain type
-                // (unchanged from your original code)
                 let rigtorium_val = rigtorium_noise.get([
                     world_x as f64 * RIGTORIUM_NOISE_SCALE,
                     world_y as f64 * RIGTORIUM_NOISE_SCALE,
@@ -1242,7 +1193,6 @@ fn generate_chunk(
                     world_y as f64 * ELECTRINE_NOISE_SCALE,
                 ]) + ELECTRINE_DENSITY;
 
-                // Determine terrain type
                 let terrain_type = if rigtorium_val > TERRAIN_BASE_THRESHOLD
                     && rigtorium_val > flextorium_val
                     && rigtorium_val > electrine_val
@@ -1262,10 +1212,8 @@ fn generate_chunk(
                     TerrainTileType::Stone
                 };
 
-                // Store terrain type in world
                 world.terrain.insert(pos, terrain_type);
 
-                // Choose texture based on terrain type
                 let texture_path = match terrain_type {
                     TerrainTileType::Stone => "embedded://textures/terrain/stone.png",
                     TerrainTileType::RawFlextoriumDeposit => {
@@ -1279,15 +1227,10 @@ fn generate_chunk(
                     }
                 };
 
-                // Use RELATIVE coordinates for child tiles of the chunk
                 parent.spawn((
                     Sprite::from_image(asset_server.load(texture_path)),
                     Transform {
-                        translation: Vec3::new(
-                            x as f32 * TILE_SIZE, // Relative to chunk, not world
-                            y as f32 * TILE_SIZE, // Relative to chunk, not world
-                            -1.0,
-                        ),
+                        translation: Vec3::new(x as f32 * TILE_SIZE, y as f32 * TILE_SIZE, -1.0),
                         scale: Vec3::splat(TILE_SIZE / IMAGE_SIZE),
                         ..Default::default()
                     },
@@ -1367,7 +1310,6 @@ fn tick_tiles(
                 }
                 Action::MoveRouter(start, end, item, last_output) => {
                     if let Some(tile) = world.tiles.get_mut(&end) {
-                        // Similar to Move action logic, but for routers
                         if let Some(end_conveyor) = tile.0.as_any_mut().downcast_mut::<Conveyor>() {
                             if end_conveyor.item.is_none() {
                                 end_conveyor.item = Some(item);
@@ -1376,12 +1318,11 @@ fn tick_tiles(
                                         start_tile.0.as_any_mut().downcast_mut::<Router>()
                                     {
                                         start_router.item = None;
-                                        start_router.last_output = last_output; // Update the last output used
+                                        start_router.last_output = last_output;
                                     }
                                 }
                             }
                         }
-                        // Handle other destination types similarly...
                     }
                 }
                 Action::Produce(position) => {
@@ -1397,7 +1338,6 @@ fn tick_tiles(
                                 }
 
                                 if let Some(target_tile) = world.tiles.get_mut(&end_position) {
-                                    // Handle different types of destination tiles
                                     if let Some(conveyor) =
                                         target_tile.0.as_any_mut().downcast_mut::<Conveyor>()
                                     {
@@ -1460,7 +1400,6 @@ fn tick_tiles(
                             }
 
                             if let Some(target_tile) = world.tiles.get_mut(&end_position) {
-                                // Handle different types of destination tiles
                                 if let Some(conveyor) =
                                     target_tile.0.as_any_mut().downcast_mut::<Conveyor>()
                                 {
@@ -1525,8 +1464,6 @@ fn tick_tiles(
         world.actions = sort_moves_topologically(next, &world);
         world.actions.reverse();
 
-        // Track which positions will receive an item (destination) and
-        // which positions have had their item removed (source)
         let mut filled_positions: HashSet<Position> = HashSet::new();
         let mut empty_positions: HashSet<Position> = HashSet::new();
 
@@ -1546,7 +1483,7 @@ fn tick_tiles(
             match action {
                 Action::Move(start, end, item) => {
                     if let Some(tile) = world.tiles.get(end) {
-                        if let Some(end_conveyor) = tile.0.as_any().downcast_ref::<Conveyor>() {
+                        if tile.0.as_any().is::<Conveyor>() {
                             if !filled_positions.contains(end) && empty_positions.contains(end) {
                                 filled_positions.insert(*end);
                                 empty_positions.remove(end);
@@ -1578,7 +1515,7 @@ fn tick_tiles(
                                     },
                                 ));
                             }
-                        } else if let Some(end_router) = tile.0.as_any().downcast_ref::<Router>() {
+                        } else if tile.0.as_any().is::<Router>() {
                             if !filled_positions.contains(end) && empty_positions.contains(end) {
                                 filled_positions.insert(*end);
                                 empty_positions.remove(end);
@@ -1675,11 +1612,9 @@ fn tick_tiles(
                 }
                 Action::MoveRouter(start, end, item, _last_output) => {
                     if let Some(tile) = world.tiles.get(end) {
-                        let can_accept = if let Some(conveyor) =
-                            tile.0.as_any().downcast_ref::<Conveyor>()
-                        {
+                        let can_accept = if tile.0.as_any().is::<Conveyor>() {
                             !filled_positions.contains(end) && empty_positions.contains(end)
-                        } else if let Some(router) = tile.0.as_any().downcast_ref::<Router>() {
+                        } else if tile.0.as_any().is::<Router>() {
                             !filled_positions.contains(end) && empty_positions.contains(end)
                         } else if let Some(factory) = tile.0.as_any().downcast_ref::<Factory>() {
                             factory.factory_type.capacity().get(item).unwrap_or(&0_u32)
@@ -1731,16 +1666,26 @@ fn tick_tiles(
                                 }
 
                                 if let Some(target_tile) = world.tiles.get(&end_position) {
-                                    let can_accept = if let Some(conveyor) =
-                                        target_tile.0.as_any().downcast_ref::<Conveyor>()
-                                    {
-                                        !filled_positions.contains(&end_position)
+                                    let can_accept = if target_tile.0.as_any().is::<Conveyor>() {
+                                        if !filled_positions.contains(&end_position)
                                             && empty_positions.contains(&end_position)
-                                    } else if let Some(router) =
-                                        target_tile.0.as_any().downcast_ref::<Router>()
-                                    {
-                                        !filled_positions.contains(&end_position)
+                                        {
+                                            filled_positions.insert(end_position);
+                                            empty_positions.remove(&end_position);
+                                            true
+                                        } else {
+                                            false
+                                        }
+                                    } else if target_tile.0.as_any().is::<Router>() {
+                                        if !filled_positions.contains(&end_position)
                                             && empty_positions.contains(&end_position)
+                                        {
+                                            filled_positions.insert(end_position);
+                                            empty_positions.remove(&end_position);
+                                            true
+                                        } else {
+                                            false
+                                        }
                                     } else if let Some(storage) =
                                         target_tile.0.as_any().downcast_ref::<Storage>()
                                     {
@@ -1759,21 +1704,6 @@ fn tick_tiles(
                                     };
 
                                     if can_accept {
-                                        // Update position tracking if needed
-                                        if let Some(conveyor) =
-                                            target_tile.0.as_any().downcast_ref::<Conveyor>()
-                                        {
-                                            filled_positions.insert(end_position);
-                                            empty_positions.remove(&end_position);
-                                        }
-                                        if let Some(router) =
-                                            target_tile.0.as_any().downcast_ref::<Router>()
-                                        {
-                                            filled_positions.insert(end_position);
-                                            empty_positions.remove(&end_position);
-                                        }
-
-                                        // Create the animation
                                         let start_pos = Vec3::new(
                                             position.x as f32 * TILE_SIZE,
                                             position.y as f32 * TILE_SIZE,
@@ -1816,16 +1746,26 @@ fn tick_tiles(
                                 Direction::Right => end_position.x += 1,
                             }
                             if let Some(target_tile) = world.tiles.get(&end_position) {
-                                let can_accept = if let Some(conveyor) =
-                                    target_tile.0.as_any().downcast_ref::<Conveyor>()
-                                {
-                                    !filled_positions.contains(&end_position)
+                                let can_accept = if target_tile.0.as_any().is::<Conveyor>() {
+                                    if !filled_positions.contains(&end_position)
                                         && empty_positions.contains(&end_position)
-                                } else if let Some(router) =
-                                    target_tile.0.as_any().downcast_ref::<Router>()
-                                {
-                                    !filled_positions.contains(&end_position)
+                                    {
+                                        filled_positions.insert(end_position);
+                                        empty_positions.remove(&end_position);
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                } else if target_tile.0.as_any().is::<Router>() {
+                                    if !filled_positions.contains(&end_position)
                                         && empty_positions.contains(&end_position)
+                                    {
+                                        filled_positions.insert(end_position);
+                                        empty_positions.remove(&end_position);
+                                        true
+                                    } else {
+                                        false
+                                    }
                                 } else if let Some(storage) =
                                     target_tile.0.as_any().downcast_ref::<Storage>()
                                 {
@@ -1840,21 +1780,6 @@ fn tick_tiles(
                                 };
 
                                 if can_accept {
-                                    // Update position tracking if needed
-                                    if let Some(conveyor) =
-                                        target_tile.0.as_any().downcast_ref::<Conveyor>()
-                                    {
-                                        filled_positions.insert(end_position);
-                                        empty_positions.remove(&end_position);
-                                    }
-                                    if let Some(router) =
-                                        target_tile.0.as_any().downcast_ref::<Router>()
-                                    {
-                                        filled_positions.insert(end_position);
-                                        empty_positions.remove(&end_position);
-                                    }
-
-                                    // Create the animation
                                     let start_pos = Vec3::new(
                                         position.x as f32 * TILE_SIZE,
                                         position.y as f32 * TILE_SIZE,
@@ -1896,13 +1821,10 @@ fn tick_tiles(
 }
 
 fn sort_moves_topologically(actions: Vec<Action>, world: &WorldRes) -> Vec<Action> {
-    // Map to track which actions are outputting to a specific position
     let mut position_to_output_action: HashMap<Position, Vec<usize>> = HashMap::new();
 
-    // Map to track which actions are inputting from a specific position
     let mut position_to_input_action: HashMap<Position, Vec<usize>> = HashMap::new();
 
-    // First pass: identify all positions that actions are operating on
     for (i, action) in actions.iter().enumerate() {
         match action {
             Action::Move(from, to, _) => {
@@ -1914,7 +1836,6 @@ fn sort_moves_topologically(actions: Vec<Action>, world: &WorldRes) -> Vec<Actio
                 position_to_input_action.entry(*to).or_default().push(i);
             }
             Action::Produce(pos) => {
-                // Get destination position for this produce action
                 if let Some((_, destination)) = get_produce_destination(*pos, world) {
                     position_to_output_action.entry(*pos).or_default().push(i);
                     position_to_input_action
@@ -1925,22 +1846,18 @@ fn sort_moves_topologically(actions: Vec<Action>, world: &WorldRes) -> Vec<Actio
             }
             Action::Teleport(pos, _) => {
                 position_to_output_action.entry(*pos).or_default().push(i);
-                // No specific input position for teleport
             }
         }
     }
 
-    // Build dependency graph
     let mut graph: HashMap<usize, Vec<usize>> = HashMap::new();
     let mut in_degree: HashMap<usize, usize> = HashMap::new();
 
-    // An action that outputs to a position should be executed before actions that input from that position
     for (pos, output_actions) in &position_to_output_action {
         if let Some(input_actions) = position_to_input_action.get(pos) {
             for &output_action in output_actions {
                 for &input_action in input_actions {
                     if output_action != input_action {
-                        // Avoid self-dependencies
                         graph.entry(input_action).or_default().push(output_action);
                         *in_degree.entry(output_action).or_insert(0) += 1;
                     }
@@ -1949,7 +1866,6 @@ fn sort_moves_topologically(actions: Vec<Action>, world: &WorldRes) -> Vec<Actio
         }
     }
 
-    // Topological sort (unchanged from your original function)
     let mut queue: Vec<usize> = (0..actions.len())
         .filter(|i| !in_degree.contains_key(i))
         .collect();
@@ -1972,7 +1888,6 @@ fn sort_moves_topologically(actions: Vec<Action>, world: &WorldRes) -> Vec<Actio
         }
     }
 
-    // Handle any remaining actions
     for (i, action) in actions.iter().enumerate() {
         if !visited.contains(&i) {
             sorted.push(action.clone());
@@ -2047,7 +1962,6 @@ fn update_tile_visuals(
                     0.0,
                 );
 
-                // Determine which texture to use based on incoming conveyors
                 let texture_path = determine_conveyor_texture(&world, conveyor);
                 sprite.image = asset_server.load(texture_path);
 
@@ -2168,37 +2082,34 @@ fn determine_conveyor_texture(world: &WorldRes, conveyor: &Conveyor) -> &'static
     let pos = conveyor.position;
     let dir = conveyor.direction;
 
-    // Calculate positions to check (behind, left, right relative to conveyor direction)
     let (behind_pos, left_pos, right_pos) = match dir {
         Direction::Up => (
-            Position::new(pos.x, pos.y - 1), // behind = down
-            Position::new(pos.x - 1, pos.y), // left
-            Position::new(pos.x + 1, pos.y), // right
+            Position::new(pos.x, pos.y - 1),
+            Position::new(pos.x - 1, pos.y),
+            Position::new(pos.x + 1, pos.y),
         ),
         Direction::Down => (
-            Position::new(pos.x, pos.y + 1), // behind = up
-            Position::new(pos.x + 1, pos.y), // left (from perspective of down-facing conveyor)
-            Position::new(pos.x - 1, pos.y), // right (from perspective of down-facing conveyor)
+            Position::new(pos.x, pos.y + 1),
+            Position::new(pos.x + 1, pos.y),
+            Position::new(pos.x - 1, pos.y),
         ),
         Direction::Left => (
-            Position::new(pos.x + 1, pos.y), // behind = right
-            Position::new(pos.x, pos.y - 1), // left (from perspective of left-facing conveyor)
-            Position::new(pos.x, pos.y + 1), // right (from perspective of left-facing conveyor)
+            Position::new(pos.x + 1, pos.y),
+            Position::new(pos.x, pos.y - 1),
+            Position::new(pos.x, pos.y + 1),
         ),
         Direction::Right => (
-            Position::new(pos.x - 1, pos.y), // behind = left
-            Position::new(pos.x, pos.y + 1), // left (from perspective of right-facing conveyor)
-            Position::new(pos.x, pos.y - 1), // right (from perspective of right-facing conveyor)
+            Position::new(pos.x - 1, pos.y),
+            Position::new(pos.x, pos.y + 1),
+            Position::new(pos.x, pos.y - 1),
         ),
     };
 
-    // Check if conveyors at these positions are pointing to current conveyor
     let has_behind = is_conveyor_pointing_to(world, behind_pos, dir);
     let has_left = is_conveyor_pointing_to(world, left_pos, rotate_direction_clockwise(dir));
     let has_right =
         is_conveyor_pointing_to(world, right_pos, rotate_direction_counterclockwise(dir));
 
-    // Select texture based on incoming conveyors
     match (has_behind, has_left, has_right) {
         (true, true, false) => "embedded://textures/tiles/conveyors/left_back.png",
         (true, false, true) => "embedded://textures/tiles/conveyors/right_back.png",
@@ -2207,7 +2118,7 @@ fn determine_conveyor_texture(world: &WorldRes, conveyor: &Conveyor) -> &'static
         (false, true, false) => "embedded://textures/tiles/conveyors/left.png",
         (false, false, true) => "embedded://textures/tiles/conveyors/right.png",
         (true, true, true) => "embedded://textures/tiles/conveyors/all.png",
-        _ => "embedded://textures/tiles/conveyors/back.png", // Default for all other cases
+        _ => "embedded://textures/tiles/conveyors/back.png",
     }
 }
 
@@ -2328,11 +2239,9 @@ fn manage_tiles(
 
     for event in mouse_wheel_events.read() {
         if placer.tile_type == (0, 1) {
-            // When not placing (empty hand) - use mouse wheel for zoom
             let zoom_delta = event.y * ZOOM_SPEED;
             placer.zoom_level = (placer.zoom_level + zoom_delta).clamp(MIN_ZOOM, MAX_ZOOM);
 
-            // Apply zoom to camera
             if let Ok((_, mut transform)) = camera_query.single_mut() {
                 transform.scale = Vec3::splat(1.0 / placer.zoom_level);
             }
@@ -2504,6 +2413,27 @@ fn manage_tiles(
             }
         }
     }
+
+    if keyboard_input.pressed(KeyCode::KeyE) {
+        commands.spawn((
+            Node {
+                width: Val::Vw(100.0),
+                height: Val::Vh(100.0),
+                display: Display::Grid,
+                ..Default::default()
+            },
+            children![
+                Node {
+                    width: Val::Vw(50.0),
+                    height: Val::Vh(75.0),
+                    justify_self: JustifySelf::Center,
+                    align_self: AlignSelf::Center,
+                    ..Default::default()
+                },
+                BackgroundColor(Color::WHITE)
+            ],
+        ));
+    }
 }
 
 fn get_new_tile(
@@ -2525,7 +2455,7 @@ fn get_new_tile(
                 position,
                 direction,
                 item: None,
-                last_output: RouterOutputIndex::Forward, // Initialize with forward
+                last_output: RouterOutputIndex::Forward,
             }) as Box<dyn Tile>,
             tile_type,
         ),
