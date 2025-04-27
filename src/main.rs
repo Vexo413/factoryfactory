@@ -15,6 +15,8 @@ use std::{
     path::Path,
 };
 
+// MAKE THE COMMIT MESSAGE DESCRIBE EVERYTHING NEW IN DETAIL
+
 const TILE_SIZE: f32 = 64.0;
 const ITEM_SIZE: f32 = 32.0;
 const IMAGE_SIZE: f32 = 128.0;
@@ -35,7 +37,7 @@ const ELECTRINE_DENSITY: f64 = -0.4;
 const CHUNK_SIZE: i32 = 16;
 
 const MIN_ZOOM: f32 = 0.1;
-const MAX_ZOOM: f32 = 3.0;
+const MAX_ZOOM: f32 = 2.0;
 const ZOOM_SPEED: f32 = 0.0001;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -79,12 +81,14 @@ enum SerializableTile {
         position: Position,
         direction: Direction,
         extractor_type: ExtractorType,
+        item: Option<Item>,
     },
     Factory {
         position: Position,
         direction: Direction,
         factory_type: FactoryType,
         inventory: HashMap<Item, u32>,
+        item: Option<Item>,
     },
 
     Storage {
@@ -96,6 +100,11 @@ enum SerializableTile {
     Portal {
         position: Position,
         item: Option<Item>,
+    },
+    Junction {
+        position: Position,
+        horizontal_item: Option<(Item, Direction)>,
+        vertical_item: Option<(Item, Direction)>,
     },
 }
 
@@ -147,6 +156,7 @@ impl Direction {
 enum FactoryType {
     RigtoriumSmelter,
     FlextoriumFabricator,
+    RigtoriumRodMolder,
     ConveyorConstructor,
 }
 
@@ -165,10 +175,17 @@ impl FactoryType {
                 hashmap.insert(Item::Electrine, 2);
                 hashmap
             }
+            FactoryType::RigtoriumRodMolder => {
+                let mut hashmap = HashMap::new();
+                hashmap.insert(Item::Rigtorium, 4);
+                hashmap.insert(Item::Electrine, 2);
+                hashmap
+            }
             FactoryType::ConveyorConstructor => {
                 let mut hashmap = HashMap::new();
-                hashmap.insert(Item::Flextorium, 4);
-                hashmap.insert(Item::Rigtorium, 2);
+                hashmap.insert(Item::Flextorium, 8);
+                hashmap.insert(Item::RigtoriumRod, 4);
+                hashmap.insert(Item::Electrine, 2);
                 hashmap
             }
         }
@@ -193,10 +210,20 @@ impl FactoryType {
                     output: Item::Flextorium,
                 }
             }
+            FactoryType::RigtoriumRodMolder => {
+                let mut inputs = HashMap::new();
+                inputs.insert(Item::Rigtorium, 2);
+                inputs.insert(Item::Electrine, 1);
+                Recipe {
+                    inputs,
+                    output: Item::RigtoriumRod,
+                }
+            }
             FactoryType::ConveyorConstructor => {
                 let mut inputs = HashMap::new();
-                inputs.insert(Item::Flextorium, 2);
-                inputs.insert(Item::Rigtorium, 1);
+                inputs.insert(Item::Flextorium, 4);
+                inputs.insert(Item::RigtoriumRod, 2);
+                inputs.insert(Item::Electrine, 1);
                 Recipe {
                     inputs,
                     output: Item::Conveyor,
@@ -204,7 +231,7 @@ impl FactoryType {
             }
         }
     }
-    fn sprite(&self) -> String {
+    fn sprite(&self) -> &'static str {
         match self {
             FactoryType::RigtoriumSmelter => {
                 "embedded://textures/tiles/factories/rigtorium_smelter.png"
@@ -212,15 +239,17 @@ impl FactoryType {
             FactoryType::FlextoriumFabricator => {
                 "embedded://textures/tiles/factories/flextorium_fabricator.png"
             }
+            FactoryType::RigtoriumRodMolder => {
+                "embedded://textures/tiles/factories/rigtorium_rod_molder.png"
+            }
             FactoryType::ConveyorConstructor => {
                 "embedded://textures/tiles/factories/conveyor_constructor.png"
             }
         }
-        .to_string()
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 enum Action {
     Move(Position, Position, Item),
     MoveRouter(Position, Position, Item, RouterOutputIndex),
@@ -235,22 +264,27 @@ enum Item {
     Flextorium,
     Rigtorium,
     Electrine,
-    Product,
+    RigtoriumRod,
     Conveyor,
 }
 
 impl Item {
-    fn sprite(&self) -> String {
+    fn sprite(&self) -> &'static str {
         match self {
             Item::RawFlextorium => "embedded://textures/items/raw_flextorium.png",
             Item::RawRigtorium => "embedded://textures/items/raw_rigtorium.png",
             Item::Flextorium => "embedded://textures/items/flextorium.png",
             Item::Rigtorium => "embedded://textures/items/rigtorium.png",
             Item::Electrine => "embedded://textures/items/electrine.png",
-            Item::Product => "embedded://textures/items/product.png",
+            Item::RigtoriumRod => "embedded://textures/items/rigtorium_rod.png",
             Item::Conveyor => "embedded://textures/items/conveyor.png",
         }
-        .to_string()
+    }
+    fn is_also_tile(&self) -> bool {
+        match self {
+            Item::Conveyor => true,
+            _ => false,
+        }
     }
 }
 
@@ -271,6 +305,16 @@ struct Position {
 impl Position {
     fn new(x: i32, y: i32) -> Self {
         Self { x, y }
+    }
+    fn shift(&self, direction: Direction) -> Position {
+        let mut pos = *self;
+        match direction {
+            Direction::Up => pos.y += 1,
+            Direction::Down => pos.y -= 1,
+            Direction::Left => pos.x -= 1,
+            Direction::Right => pos.x += 1,
+        }
+        pos
     }
 
     fn get_as_key(&self) -> u64 {
@@ -315,6 +359,42 @@ struct WorldRes {
     actions: Vec<Action>,
 }
 
+#[derive(Component)]
+struct Inventory {
+    selected_category: u32,
+}
+
+#[derive(Component)]
+struct InventoryCategory {
+    category: u32,
+}
+
+#[derive(Component)]
+struct InventoryItemsPanel;
+
+#[derive(Component)]
+struct InventoryItem {
+    tile_type: (u32, u32),
+}
+#[derive(Component)]
+struct ContextMenu;
+
+#[derive(Component)]
+struct HotkeyOption {
+    tile_type: (u32, u32),
+}
+
+#[derive(Component)]
+struct HotkeyButton {
+    key: u8,
+    tile_type: (u32, u32),
+}
+
+#[derive(Resource, Default)]
+struct Hotkeys {
+    mappings: HashMap<u8, (u32, u32)>,
+}
+
 impl WorldRes {
     fn save(&self, path: impl AsRef<Path>) -> Result<(), io::Error> {
         let serializable_world = SerializableWorld {
@@ -341,6 +421,7 @@ impl WorldRes {
                                 position: extractor.position,
                                 direction: extractor.direction,
                                 extractor_type: extractor.extractor_type,
+                                item: extractor.item,
                             }
                         } else if let Some(factory) = tile.as_any().downcast_ref::<Factory>() {
                             SerializableTile::Factory {
@@ -348,11 +429,18 @@ impl WorldRes {
                                 direction: factory.direction,
                                 factory_type: factory.factory_type,
                                 inventory: factory.inventory.clone(),
+                                item: factory.item,
                             }
                         } else if let Some(portal) = tile.as_any().downcast_ref::<Portal>() {
                             SerializableTile::Portal {
                                 position: portal.position,
                                 item: portal.item,
+                            }
+                        } else if let Some(junction) = tile.as_any().downcast_ref::<Junction>() {
+                            SerializableTile::Junction {
+                                position: junction.position,
+                                horizontal_item: junction.horizontal_item,
+                                vertical_item: junction.vertical_item,
                             }
                         } else {
                             SerializableTile::Conveyor {
@@ -426,21 +514,25 @@ impl WorldRes {
                     position,
                     direction,
                     extractor_type,
+                    item,
                 } => Box::new(Extractor {
                     position,
                     direction,
                     extractor_type,
+                    item,
                 }),
                 SerializableTile::Factory {
                     position,
                     direction,
                     factory_type,
                     inventory,
+                    item,
                 } => Box::new(Factory {
                     position,
                     direction,
                     factory_type,
                     inventory,
+                    item,
                 }),
                 SerializableTile::Storage {
                     position,
@@ -454,6 +546,15 @@ impl WorldRes {
                     inventory,
                 }),
                 SerializableTile::Portal { position, item } => Box::new(Portal { position, item }),
+                SerializableTile::Junction {
+                    position,
+                    horizontal_item,
+                    vertical_item,
+                } => Box::new(Junction {
+                    position,
+                    horizontal_item,
+                    vertical_item,
+                }),
             };
 
             tiles.insert(pos, (boxed_tile, id));
@@ -525,9 +626,11 @@ impl Default for WorldRes {
         let mut resources = HashMap::new();
         resources.insert((1, 1), 40);
         resources.insert((1, 2), 10);
+        resources.insert((1, 3), 10);
         resources.insert((2, 1), 10);
         resources.insert((2, 2), 10);
         resources.insert((2, 3), 10);
+        resources.insert((2, 4), 10);
         resources.insert((3, 1), 10);
         resources.insert((3, 2), 10);
         resources.insert((3, 3), 10);
@@ -734,6 +837,7 @@ struct Extractor {
     position: Position,
     direction: Direction,
     extractor_type: ExtractorType,
+    item: Option<Item>,
 }
 
 impl Tile for Extractor {
@@ -741,47 +845,24 @@ impl Tile for Extractor {
         if world.tick_count % self.extractor_type.interval() == 0
             && world.terrain.get(&self.position) == Some(&self.extractor_type.terrain())
         {
-            let mut end_position = self.position;
-            match self.direction {
-                Direction::Up => end_position.y += 1,
-                Direction::Down => end_position.y -= 1,
-                Direction::Left => end_position.x -= 1,
-                Direction::Right => end_position.x += 1,
-            }
+            return Some(Action::Produce(self.position));
+        }
+        let start_position = self.position;
+        let mut end_position = self.position;
 
-            if let Some(tile) = world.tiles.get(&end_position) {
-                let extracted_item = self.extractor_type.spawn_item();
+        match self.direction {
+            Direction::Up => end_position.y += 1,
+            Direction::Down => end_position.y -= 1,
+            Direction::Left => end_position.x -= 1,
+            Direction::Right => end_position.x += 1,
+        }
 
-                let can_output = if let Some(conveyor) = tile.0.as_any().downcast_ref::<Conveyor>()
-                {
-                    conveyor.item.is_none()
-                } else if let Some(router) = tile.0.as_any().downcast_ref::<Router>() {
-                    router.item.is_none()
-                } else if let Some(factory) = tile.0.as_any().downcast_ref::<Factory>() {
-                    factory
-                        .factory_type
-                        .capacity()
-                        .get(&extracted_item)
-                        .unwrap_or(&0)
-                        > factory.inventory.get(&extracted_item).unwrap_or(&0)
-                } else if let Some(storage) = tile.0.as_any().downcast_ref::<Storage>() {
-                    storage
-                        .storage_type
-                        .capacity()
-                        .get(&extracted_item)
-                        .unwrap_or(&0)
-                        > storage.inventory.get(&extracted_item).unwrap_or(&0)
-                } else if let Some(portal) = tile.0.as_any().downcast_ref::<Portal>() {
-                    portal.item.is_none()
-                } else {
-                    false
-                };
-
-                if can_output {
-                    return Some(Action::Produce(self.position));
-                }
+        if world.tiles.contains_key(&end_position) {
+            if let Some(item) = self.item {
+                return Some(Action::Move(start_position, end_position, item));
             }
         }
+
         None
     }
 
@@ -800,6 +881,7 @@ struct Factory {
     direction: Direction,
     factory_type: FactoryType,
     inventory: HashMap<Item, u32>,
+    item: Option<Item>,
 }
 
 impl Factory {
@@ -809,6 +891,7 @@ impl Factory {
             .inputs
             .iter()
             .all(|(item, &qty_required)| self.inventory.get(item).unwrap_or(&0) >= &qty_required)
+            && self.item.is_none()
     }
 
     fn produce(&mut self) -> Option<Item> {
@@ -825,18 +908,14 @@ impl Factory {
             None
         }
     }
-    fn get_produce_item(&self) -> Option<Item> {
-        let recipe = self.factory_type.recipe();
-        if self.can_produce() {
-            Some(recipe.output)
-        } else {
-            None
-        }
-    }
 }
 
 impl Tile for Factory {
     fn tick(&self, world: &WorldRes) -> Option<Action> {
+        if self.can_produce() {
+            return Some(Action::Produce(self.position));
+        }
+
         let mut end_position = self.position;
 
         match self.direction {
@@ -845,38 +924,10 @@ impl Tile for Factory {
             Direction::Left => end_position.x -= 1,
             Direction::Right => end_position.x += 1,
         }
-        if let Some(tile) = world.tiles.get(&end_position) {
-            if self.can_produce() {
-                let produced_item = self.get_produce_item().unwrap();
 
-                let can_output = if let Some(conveyor) = tile.0.as_any().downcast_ref::<Conveyor>()
-                {
-                    conveyor.item.is_none()
-                } else if let Some(router) = tile.0.as_any().downcast_ref::<Router>() {
-                    router.item.is_none()
-                } else if let Some(factory) = tile.0.as_any().downcast_ref::<Factory>() {
-                    factory
-                        .factory_type
-                        .capacity()
-                        .get(&produced_item)
-                        .unwrap_or(&0)
-                        > factory.inventory.get(&produced_item).unwrap_or(&0)
-                } else if let Some(storage) = tile.0.as_any().downcast_ref::<Storage>() {
-                    storage
-                        .storage_type
-                        .capacity()
-                        .get(&produced_item)
-                        .unwrap_or(&0)
-                        > storage.inventory.get(&produced_item).unwrap_or(&0)
-                } else if let Some(portal) = tile.0.as_any().downcast_ref::<Portal>() {
-                    portal.item.is_none()
-                } else {
-                    false
-                };
-
-                if can_output {
-                    return Some(Action::Produce(self.position));
-                }
+        if world.tiles.contains_key(&end_position) {
+            if let Some(item) = self.item {
+                return Some(Action::Move(self.position, end_position, item));
             }
         }
 
@@ -986,6 +1037,76 @@ impl Tile for Portal {
     }
 }
 
+fn can_tile_accept_item(tile: &(Box<dyn Tile>, (u32, u32)), item: Item) -> bool {
+    if let Some(conveyor) = tile.0.as_any().downcast_ref::<Conveyor>() {
+        conveyor.item.is_none()
+    } else if let Some(router) = tile.0.as_any().downcast_ref::<Router>() {
+        router.item.is_none()
+    } else if let Some(factory) = tile.0.as_any().downcast_ref::<Factory>() {
+        factory.factory_type.capacity().get(&item).unwrap_or(&0)
+            > factory.inventory.get(&item).unwrap_or(&0)
+    } else if let Some(junction) = tile.0.as_any().downcast_ref::<Junction>() {
+        // For horizontal movement into another junction
+        junction.horizontal_item.is_none()
+    } else if let Some(portal) = tile.0.as_any().downcast_ref::<Portal>() {
+        portal.item.is_none()
+    } else {
+        false
+    }
+}
+
+#[derive(Debug)]
+struct Junction {
+    position: Position,
+    // For items that travel horizontally, record the item along with the incoming horizontal direction.
+    horizontal_item: Option<(Item, Direction)>,
+    // For vertical movement, record the item along with the incoming vertical direction.
+    vertical_item: Option<(Item, Direction)>,
+}
+impl Tile for Junction {
+    fn tick(&self, world: &WorldRes) -> Option<Action> {
+        // Try horizontal lane first.
+        if let Some((item, input_dir)) = self.horizontal_item {
+            // For horizontal, if the item came in from the left, then output to the right (and vice‐versa)
+            let output = match input_dir {
+                Direction::Left => Direction::Right,
+                Direction::Right => Direction::Left,
+                _ => return None, // defensive: if something else was stored
+            };
+            let end_pos = self.position.shift(output);
+            if world.tiles.get(&end_pos).is_some()
+                && can_tile_accept_item(world.tiles.get(&end_pos).unwrap(), item)
+            {
+                return Some(Action::Move(self.position, end_pos, item));
+            }
+        }
+
+        // Then try the vertical lane.
+        if let Some((item, input_dir)) = self.vertical_item {
+            // If the item came in from below (i.e. input=Down) then it should be output upward (Up). If it came from above, then output Down.
+            let output = match input_dir {
+                Direction::Down => Direction::Up,
+                Direction::Up => Direction::Down,
+                _ => return None,
+            };
+            let end_pos = self.position.shift(output);
+            if world.tiles.get(&end_pos).is_some()
+                && can_tile_accept_item(world.tiles.get(&end_pos).unwrap(), item)
+            {
+                return Some(Action::Move(self.position, end_pos, item));
+            }
+        }
+        None
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
 fn main() {
     App::new()
         .add_plugins((
@@ -1013,6 +1134,7 @@ fn main() {
         ))
         .insert_resource(WorldRes::default())
         .insert_resource(Placer::default())
+        .insert_resource(Hotkeys::default())
         .add_systems(Startup, setup)
         .add_systems(
             Update,
@@ -1023,6 +1145,10 @@ fn main() {
                 animate_items.after(update_tile_visuals),
                 manage_tiles,
                 move_camera,
+                update_inventory_view,
+                handle_inventory_interaction,
+                handle_context_menu,
+                handle_hotkey_assignment,
             ),
         )
         .run();
@@ -1056,6 +1182,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut world: ResM
                     position: Position::new(-3, -3),
                     direction: Direction::Right,
                     extractor_type: ExtractorType::RawRigtorium,
+                    item: None,
                 }),
                 (3, 1),
             ),
@@ -1067,6 +1194,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut world: ResM
                     position: Position::new(3, 3),
                     direction: Direction::Left,
                     extractor_type: ExtractorType::RawFlextorium,
+                    item: None,
                 }),
                 (3, 2),
             ),
@@ -1262,6 +1390,26 @@ fn tick_tiles(
                                         tile.0.as_any_mut().downcast_mut::<Conveyor>()
                                     {
                                         start_conveyor.item = None;
+                                    } else if let Some(start_router) =
+                                        tile.0.as_any_mut().downcast_mut::<Router>()
+                                    {
+                                        start_router.item = None;
+                                    } else if let Some(start_factory) =
+                                        tile.0.as_any_mut().downcast_mut::<Factory>()
+                                    {
+                                        start_factory.item = None;
+                                    } else if let Some(start_extractor) =
+                                        tile.0.as_any_mut().downcast_mut::<Extractor>()
+                                    {
+                                        start_extractor.item = None;
+                                    } else if let Some(start_junction) =
+                                        tile.0.as_any_mut().downcast_mut::<Junction>()
+                                    {
+                                        if start.x != end.x {
+                                            start_junction.horizontal_item = None;
+                                        } else if start.y != end.y {
+                                            start_junction.vertical_item = None;
+                                        }
                                     }
                                 }
                             }
@@ -1275,6 +1423,18 @@ fn tick_tiles(
                                         tile.0.as_any_mut().downcast_mut::<Conveyor>()
                                     {
                                         start_conveyor.item = None;
+                                    } else if let Some(start_router) =
+                                        tile.0.as_any_mut().downcast_mut::<Router>()
+                                    {
+                                        start_router.item = None;
+                                    } else if let Some(start_factory) =
+                                        tile.0.as_any_mut().downcast_mut::<Factory>()
+                                    {
+                                        start_factory.item = None;
+                                    } else if let Some(start_extractor) =
+                                        tile.0.as_any_mut().downcast_mut::<Extractor>()
+                                    {
+                                        start_extractor.item = None;
                                     }
                                 }
                             }
@@ -1289,6 +1449,18 @@ fn tick_tiles(
                                         tile.0.as_any_mut().downcast_mut::<Conveyor>()
                                     {
                                         start_conveyor.item = None;
+                                    } else if let Some(start_router) =
+                                        tile.0.as_any_mut().downcast_mut::<Router>()
+                                    {
+                                        start_router.item = None;
+                                    } else if let Some(start_factory) =
+                                        tile.0.as_any_mut().downcast_mut::<Factory>()
+                                    {
+                                        start_factory.item = None;
+                                    } else if let Some(start_extractor) =
+                                        tile.0.as_any_mut().downcast_mut::<Extractor>()
+                                    {
+                                        start_extractor.item = None;
                                     }
                                 }
                             }
@@ -1302,6 +1474,84 @@ fn tick_tiles(
                                         tile.0.as_any_mut().downcast_mut::<Conveyor>()
                                     {
                                         start_conveyor.item = None;
+                                    } else if let Some(start_router) =
+                                        tile.0.as_any_mut().downcast_mut::<Router>()
+                                    {
+                                        start_router.item = None;
+                                    } else if let Some(start_factory) =
+                                        tile.0.as_any_mut().downcast_mut::<Factory>()
+                                    {
+                                        start_factory.item = None;
+                                    } else if let Some(start_extractor) =
+                                        tile.0.as_any_mut().downcast_mut::<Extractor>()
+                                    {
+                                        start_extractor.item = None;
+                                    }
+                                }
+                            }
+                        } else if let Some(end_junction) =
+                            tile.0.as_any_mut().downcast_mut::<Junction>()
+                        {
+                            // Determine if the movement was horizontal or vertical.
+                            if end.y == start.y {
+                                // Horizontal movement:
+                                // If the destination x is higher than start.x then the item came from left.
+                                let input_direction = if end.x > start.x {
+                                    Direction::Left
+                                } else {
+                                    Direction::Right
+                                };
+                                if end_junction.horizontal_item.is_none() {
+                                    end_junction.horizontal_item = Some((item, input_direction));
+                                    if let Some(tile) = world.tiles.get_mut(&start) {
+                                        if let Some(start_conveyor) =
+                                            tile.0.as_any_mut().downcast_mut::<Conveyor>()
+                                        {
+                                            start_conveyor.item = None;
+                                        } else if let Some(start_router) =
+                                            tile.0.as_any_mut().downcast_mut::<Router>()
+                                        {
+                                            start_router.item = None;
+                                        } else if let Some(start_factory) =
+                                            tile.0.as_any_mut().downcast_mut::<Factory>()
+                                        {
+                                            start_factory.item = None;
+                                        } else if let Some(start_extractor) =
+                                            tile.0.as_any_mut().downcast_mut::<Extractor>()
+                                        {
+                                            start_extractor.item = None;
+                                        }
+                                    }
+                                    // (Optionally clear the item from the source tile.)
+                                }
+                            } else {
+                                // Vertical movement:
+                                // If end.y is greater than start.y then the item came from below.
+                                let input_direction = if end.y > start.y {
+                                    Direction::Down
+                                } else {
+                                    Direction::Up
+                                };
+                                if end_junction.vertical_item.is_none() {
+                                    end_junction.vertical_item = Some((item, input_direction));
+                                    if let Some(tile) = world.tiles.get_mut(&start) {
+                                        if let Some(start_conveyor) =
+                                            tile.0.as_any_mut().downcast_mut::<Conveyor>()
+                                        {
+                                            start_conveyor.item = None;
+                                        } else if let Some(start_router) =
+                                            tile.0.as_any_mut().downcast_mut::<Router>()
+                                        {
+                                            start_router.item = None;
+                                        } else if let Some(start_factory) =
+                                            tile.0.as_any_mut().downcast_mut::<Factory>()
+                                        {
+                                            start_factory.item = None;
+                                        } else if let Some(start_extractor) =
+                                            tile.0.as_any_mut().downcast_mut::<Extractor>()
+                                        {
+                                            start_extractor.item = None;
+                                        }
                                     }
                                 }
                             }
@@ -1322,117 +1572,193 @@ fn tick_tiles(
                                     }
                                 }
                             }
+                        } else if let Some(end_router) =
+                            tile.0.as_any_mut().downcast_mut::<Router>()
+                        {
+                            if end_router.item.is_none() {
+                                end_router.item = Some(item);
+                                if let Some(start_tile) = world.tiles.get_mut(&start) {
+                                    if let Some(start_router) =
+                                        start_tile.0.as_any_mut().downcast_mut::<Router>()
+                                    {
+                                        start_router.item = None;
+                                        start_router.last_output = last_output;
+                                    }
+                                }
+                            }
+                        } else if let Some(factory) = tile.0.as_any_mut().downcast_mut::<Factory>()
+                        {
+                            if factory.factory_type.capacity().get(&item).unwrap_or(&0)
+                                > factory.inventory.get(&item).unwrap_or(&0)
+                            {
+                                *factory.inventory.entry(item).or_insert(0) += 1;
+                                if let Some(start_tile) = world.tiles.get_mut(&start) {
+                                    if let Some(start_router) =
+                                        start_tile.0.as_any_mut().downcast_mut::<Router>()
+                                    {
+                                        start_router.item = None;
+                                        start_router.last_output = last_output;
+                                    }
+                                }
+                            }
+                        } else if let Some(portal) = tile.0.as_any_mut().downcast_mut::<Portal>() {
+                            if portal.item.is_none() {
+                                portal.item = Some(item);
+                                if let Some(start_tile) = world.tiles.get_mut(&start) {
+                                    if let Some(start_router) =
+                                        start_tile.0.as_any_mut().downcast_mut::<Router>()
+                                    {
+                                        start_router.item = None;
+                                        start_router.last_output = last_output;
+                                    }
+                                }
+                            }
                         }
                     }
                 }
                 Action::Produce(position) => {
-                    if let Some(tile) = world.tiles.get_mut(&position) {
-                        if let Some(factory) = tile.0.as_any_mut().downcast_mut::<Factory>() {
-                            if let Some(produced_item) = factory.produce() {
-                                let mut end_position = factory.position;
-                                match factory.direction {
-                                    Direction::Up => end_position.y += 1,
-                                    Direction::Down => end_position.y -= 1,
-                                    Direction::Left => end_position.x -= 1,
-                                    Direction::Right => end_position.x += 1,
-                                }
-
-                                if let Some(target_tile) = world.tiles.get_mut(&end_position) {
-                                    if let Some(conveyor) =
-                                        target_tile.0.as_any_mut().downcast_mut::<Conveyor>()
-                                    {
-                                        if conveyor.item.is_none() {
-                                            conveyor.item = Some(produced_item);
-                                        }
-                                    } else if let Some(router) =
-                                        target_tile.0.as_any_mut().downcast_mut::<Router>()
-                                    {
-                                        if router.item.is_none() {
-                                            router.item = Some(produced_item);
-                                        }
-                                    } else if let Some(storage) =
-                                        target_tile.0.as_any_mut().downcast_mut::<Storage>()
-                                    {
-                                        if storage
-                                            .storage_type
-                                            .capacity()
-                                            .get(&produced_item)
-                                            .unwrap_or(&0)
-                                            > storage.inventory.get(&produced_item).unwrap_or(&0)
-                                        {
-                                            *storage.inventory.entry(produced_item).or_insert(0) +=
-                                                1;
-                                        }
-                                    } else if let Some(factory) =
-                                        target_tile.0.as_any_mut().downcast_mut::<Factory>()
-                                    {
-                                        if factory
-                                            .factory_type
-                                            .capacity()
-                                            .get(&produced_item)
-                                            .unwrap_or(&0_u32)
-                                            > factory
-                                                .inventory
-                                                .get(&produced_item)
-                                                .unwrap_or(&0_u32)
-                                        {
-                                            *factory.inventory.entry(produced_item).or_insert(0) +=
-                                                1;
-                                        }
-                                    } else if let Some(portal) =
-                                        target_tile.0.as_any_mut().downcast_mut::<Portal>()
-                                    {
-                                        if portal.item.is_none() {
-                                            portal.item = Some(produced_item);
-                                        }
+                    // Get the type of tile and item to produce
+                    let item_info: Option<(Item, Position)> = {
+                        if let Some(tile) = world.tiles.get(&position) {
+                            if let Some(factory) = tile.0.as_any().downcast_ref::<Factory>() {
+                                if factory.can_produce() {
+                                    let recipe = factory.factory_type.recipe();
+                                    let mut end_position = position;
+                                    match factory.direction {
+                                        Direction::Up => end_position.y += 1,
+                                        Direction::Down => end_position.y -= 1,
+                                        Direction::Left => end_position.x -= 1,
+                                        Direction::Right => end_position.x += 1,
                                     }
+                                    Some((recipe.output, end_position))
+                                } else {
+                                    None
                                 }
+                            } else if let Some(extractor) =
+                                tile.0.as_any().downcast_ref::<Extractor>()
+                            {
+                                if extractor.item.is_none() {
+                                    let item = extractor.extractor_type.spawn_item();
+                                    let mut end_position = position;
+                                    match extractor.direction {
+                                        Direction::Up => end_position.y += 1,
+                                        Direction::Down => end_position.y -= 1,
+                                        Direction::Left => end_position.x -= 1,
+                                        Direction::Right => end_position.x += 1,
+                                    }
+                                    Some((item, end_position))
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
                             }
-                        } else if let Some(extractor) = tile.0.as_any().downcast_ref::<Extractor>()
-                        {
-                            let mut end_position = extractor.position;
-                            let item = extractor.extractor_type.spawn_item();
-                            match extractor.direction {
-                                Direction::Up => end_position.y += 1,
-                                Direction::Down => end_position.y -= 1,
-                                Direction::Left => end_position.x -= 1,
-                                Direction::Right => end_position.x += 1,
-                            }
+                        } else {
+                            None
+                        }
+                    };
 
-                            if let Some(target_tile) = world.tiles.get_mut(&end_position) {
+                    // Now do the production and movement in separate steps
+                    if let Some((item, dest_pos)) = item_info {
+                        // First, produce the item
+                        if let Some(tile) = world.tiles.get_mut(&position) {
+                            if let Some(factory) = tile.0.as_any_mut().downcast_mut::<Factory>() {
+                                factory.produce();
+                                factory.item = Some(item);
+                            } else if let Some(extractor) =
+                                tile.0.as_any_mut().downcast_mut::<Extractor>()
+                            {
+                                extractor.item = Some(item);
+                            }
+                        }
+
+                        // Check if we can move the item immediately to the destination
+                        let can_move = if let Some(dest_tile) = world.tiles.get(&dest_pos) {
+                            if let Some(conveyor) = dest_tile.0.as_any().downcast_ref::<Conveyor>()
+                            {
+                                conveyor.item.is_none()
+                            } else if let Some(router) =
+                                dest_tile.0.as_any().downcast_ref::<Router>()
+                            {
+                                router.item.is_none()
+                            } else if let Some(factory) =
+                                dest_tile.0.as_any().downcast_ref::<Factory>()
+                            {
+                                factory.factory_type.capacity().get(&item).unwrap_or(&0)
+                                    > factory.inventory.get(&item).unwrap_or(&0)
+                            } else if let Some(portal) =
+                                dest_tile.0.as_any().downcast_ref::<Portal>()
+                            {
+                                portal.item.is_none()
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        };
+
+                        // If we can move it, do so
+                        if can_move {
+                            if let Some(dest_tile) = world.tiles.get_mut(&dest_pos) {
                                 if let Some(conveyor) =
-                                    target_tile.0.as_any_mut().downcast_mut::<Conveyor>()
+                                    dest_tile.0.as_any_mut().downcast_mut::<Conveyor>()
                                 {
-                                    if conveyor.item.is_none() {
-                                        conveyor.item = Some(item);
+                                    conveyor.item = Some(item);
+                                    if let Some(src_tile) = world.tiles.get_mut(&position) {
+                                        if let Some(factory) =
+                                            src_tile.0.as_any_mut().downcast_mut::<Factory>()
+                                        {
+                                            factory.item = None;
+                                        } else if let Some(extractor) =
+                                            src_tile.0.as_any_mut().downcast_mut::<Extractor>()
+                                        {
+                                            extractor.item = None;
+                                        }
                                     }
                                 } else if let Some(router) =
-                                    target_tile.0.as_any_mut().downcast_mut::<Router>()
+                                    dest_tile.0.as_any_mut().downcast_mut::<Router>()
                                 {
-                                    if router.item.is_none() {
-                                        router.item = Some(item);
-                                    }
-                                } else if let Some(storage) =
-                                    target_tile.0.as_any_mut().downcast_mut::<Storage>()
-                                {
-                                    if storage.storage_type.capacity().get(&item).unwrap_or(&0)
-                                        > storage.inventory.get(&item).unwrap_or(&0)
-                                    {
-                                        *storage.inventory.entry(item).or_insert(0) += 1;
+                                    router.item = Some(item);
+                                    if let Some(src_tile) = world.tiles.get_mut(&position) {
+                                        if let Some(factory) =
+                                            src_tile.0.as_any_mut().downcast_mut::<Factory>()
+                                        {
+                                            factory.item = None;
+                                        } else if let Some(extractor) =
+                                            src_tile.0.as_any_mut().downcast_mut::<Extractor>()
+                                        {
+                                            extractor.item = None;
+                                        }
                                     }
                                 } else if let Some(factory) =
-                                    target_tile.0.as_any_mut().downcast_mut::<Factory>()
+                                    dest_tile.0.as_any_mut().downcast_mut::<Factory>()
                                 {
-                                    if factory.factory_type.capacity().get(&item).unwrap_or(&0_u32)
-                                        > factory.inventory.get(&item).unwrap_or(&0_u32)
-                                    {
-                                        *factory.inventory.entry(item).or_insert(0) += 1;
+                                    *factory.inventory.entry(item).or_insert(0) += 1;
+                                    if let Some(src_tile) = world.tiles.get_mut(&position) {
+                                        if let Some(factory) =
+                                            src_tile.0.as_any_mut().downcast_mut::<Factory>()
+                                        {
+                                            factory.item = None;
+                                        } else if let Some(extractor) =
+                                            src_tile.0.as_any_mut().downcast_mut::<Extractor>()
+                                        {
+                                            extractor.item = None;
+                                        }
                                     }
                                 } else if let Some(portal) =
-                                    target_tile.0.as_any_mut().downcast_mut::<Portal>()
+                                    dest_tile.0.as_any_mut().downcast_mut::<Portal>()
                                 {
-                                    if portal.item.is_none() {
-                                        portal.item = Some(item);
+                                    portal.item = Some(item);
+                                    if let Some(src_tile) = world.tiles.get_mut(&position) {
+                                        if let Some(factory) =
+                                            src_tile.0.as_any_mut().downcast_mut::<Factory>()
+                                        {
+                                            factory.item = None;
+                                        } else if let Some(extractor) =
+                                            src_tile.0.as_any_mut().downcast_mut::<Extractor>()
+                                        {
+                                            extractor.item = None;
+                                        }
                                     }
                                 }
                             }
@@ -1442,10 +1768,9 @@ fn tick_tiles(
                 Action::Teleport(position, item) => {
                     if let Some(tiles) = world.tiles.get_mut(&position) {
                         if let Some(portal) = tiles.0.as_any_mut().downcast_mut::<Portal>() {
-                            portal.item = None;
-                            match item {
-                                Item::Conveyor => *world.resources.entry((1, 1)).or_insert(0) += 1,
-                                _ => {}
+                            if item.is_also_tile() {
+                                portal.item = None;
+                                *world.resources.entry((1, 1)).or_insert(0) += 1;
                             }
                         }
                     }
@@ -1472,6 +1797,8 @@ fn tick_tiles(
                 if conveyor.item.is_none() {
                     empty_positions.insert(*pos);
                 }
+            } else if tile.0.as_any().is::<Factory>() {
+                empty_positions.insert(*pos);
             } else if let Some(router) = tile.0.as_any().downcast_ref::<Router>() {
                 if router.item.is_none() {
                     empty_positions.insert(*pos);
@@ -1517,6 +1844,8 @@ fn tick_tiles(
                             }
                         } else if tile.0.as_any().is::<Router>() {
                             if !filled_positions.contains(end) && empty_positions.contains(end) {
+                                dbg!(!filled_positions.contains(end));
+                                dbg!(empty_positions.contains(end));
                                 filled_positions.insert(*end);
                                 empty_positions.remove(end);
 
@@ -1580,8 +1909,55 @@ fn tick_tiles(
                             }
                         } else if let Some(end_portal) = tile.0.as_any().downcast_ref::<Portal>() {
                             if end_portal.item.is_none() {
+                                filled_positions.insert(*end);
+                                empty_positions.remove(end);
+
                                 filled_positions.remove(start);
                                 empty_positions.insert(*start);
+
+                                let start_pos = Vec3::new(
+                                    start.x as f32 * TILE_SIZE,
+                                    start.y as f32 * TILE_SIZE,
+                                    1.0,
+                                );
+                                let end_pos = Vec3::new(
+                                    end.x as f32 * TILE_SIZE,
+                                    end.y as f32 * TILE_SIZE,
+                                    1.0,
+                                );
+                                commands.spawn((
+                                    ItemAnimation {
+                                        start_pos,
+                                        end_pos,
+                                        timer: Timer::from_seconds(TICK_LENGTH, TimerMode::Once),
+                                    },
+                                    Sprite::from_image(asset_server.load(item.sprite())),
+                                    Transform {
+                                        translation: start_pos,
+                                        scale: Vec3::splat(ITEM_SIZE / IMAGE_SIZE),
+                                        ..Default::default()
+                                    },
+                                ));
+                            }
+                        } else if let Some(junction) = tile.0.as_any().downcast_ref::<Junction>() {
+                            // Determine direction based on the positions
+                            let is_horizontal_movement = start.y == end.y;
+                            let can_accept = if is_horizontal_movement {
+                                junction.horizontal_item.is_none()
+                            } else {
+                                junction.vertical_item.is_none()
+                            };
+
+                            if can_accept {
+                                filled_positions.insert(*end);
+
+                                // If the item is moving horizontally, remove it from the horizontal slot
+                                // Otherwise, remove it from the vertical slot
+                                if is_horizontal_movement {
+                                    filled_positions.remove(start);
+                                } else {
+                                    filled_positions.remove(start);
+                                }
 
                                 let start_pos = Vec3::new(
                                     start.x as f32 * TILE_SIZE,
@@ -1626,9 +2002,11 @@ fn tick_tiles(
                         };
 
                         if can_accept {
+                            filled_positions.insert(*end);
+                            empty_positions.remove(end);
+
                             filled_positions.remove(start);
                             empty_positions.insert(*start);
-
                             let start_pos = Vec3::new(
                                 start.x as f32 * TILE_SIZE,
                                 start.y as f32 * TILE_SIZE,
@@ -1652,166 +2030,176 @@ fn tick_tiles(
                         }
                     }
                 }
-
                 Action::Produce(position) => {
-                    if let Some(tile) = world.tiles.get(position) {
-                        if let Some(factory) = tile.0.as_any().downcast_ref::<Factory>() {
-                            if let Some(produced_item) = factory.get_produce_item() {
-                                let mut end_position = factory.position;
-                                match factory.direction {
-                                    Direction::Up => end_position.y += 1,
-                                    Direction::Down => end_position.y -= 1,
-                                    Direction::Left => end_position.x -= 1,
-                                    Direction::Right => end_position.x += 1,
-                                }
+                    // We need to check if an extractor/factory has something to produce
+                    // and if the destination tile can accept it
+                    let can_produce_and_move = {
+                        if let Some(tile) = world.tiles.get(position) {
+                            // For factory
+                            if let Some(factory) = tile.0.as_any().downcast_ref::<Factory>() {
+                                if factory.can_produce() && factory.item.is_none() {
+                                    let mut dest_pos = *position;
+                                    match factory.direction {
+                                        Direction::Up => dest_pos.y += 1,
+                                        Direction::Down => dest_pos.y -= 1,
+                                        Direction::Left => dest_pos.x -= 1,
+                                        Direction::Right => dest_pos.x += 1,
+                                    }
 
-                                if let Some(target_tile) = world.tiles.get(&end_position) {
-                                    let can_accept = if target_tile.0.as_any().is::<Conveyor>() {
-                                        if !filled_positions.contains(&end_position)
-                                            && empty_positions.contains(&end_position)
+                                    // Check if destination can accept the item
+                                    if let Some(dest_tile) = world.tiles.get(&dest_pos) {
+                                        let output_item = factory.factory_type.recipe().output;
+                                        let can_accept = if let Some(conveyor) =
+                                            dest_tile.0.as_any().downcast_ref::<Conveyor>()
                                         {
-                                            filled_positions.insert(end_position);
-                                            empty_positions.remove(&end_position);
-                                            true
+                                            empty_positions.contains(&dest_pos)
+                                                && !filled_positions.contains(&dest_pos)
+                                        } else if let Some(router) =
+                                            dest_tile.0.as_any().downcast_ref::<Router>()
+                                        {
+                                            empty_positions.contains(&dest_pos)
+                                                && !filled_positions.contains(&dest_pos)
+                                        } else if let Some(dest_factory) =
+                                            dest_tile.0.as_any().downcast_ref::<Factory>()
+                                        {
+                                            dest_factory
+                                                .factory_type
+                                                .capacity()
+                                                .get(&output_item)
+                                                .unwrap_or(&0)
+                                                > dest_factory
+                                                    .inventory
+                                                    .get(&output_item)
+                                                    .unwrap_or(&0)
+                                        } else if let Some(portal) =
+                                            dest_tile.0.as_any().downcast_ref::<Portal>()
+                                        {
+                                            portal.item.is_none()
                                         } else {
                                             false
-                                        }
-                                    } else if target_tile.0.as_any().is::<Router>() {
-                                        if !filled_positions.contains(&end_position)
-                                            && empty_positions.contains(&end_position)
-                                        {
-                                            filled_positions.insert(end_position);
-                                            empty_positions.remove(&end_position);
-                                            true
-                                        } else {
-                                            false
-                                        }
-                                    } else if let Some(storage) =
-                                        target_tile.0.as_any().downcast_ref::<Storage>()
-                                    {
-                                        storage
-                                            .storage_type
-                                            .capacity()
-                                            .get(&produced_item)
-                                            .unwrap_or(&0)
-                                            > storage.inventory.get(&produced_item).unwrap_or(&0)
-                                    } else if let Some(portal) =
-                                        target_tile.0.as_any().downcast_ref::<Portal>()
-                                    {
-                                        portal.item.is_none()
-                                    } else {
-                                        false
-                                    };
+                                        };
 
-                                    if can_accept {
-                                        let start_pos = Vec3::new(
-                                            position.x as f32 * TILE_SIZE,
-                                            position.y as f32 * TILE_SIZE,
-                                            1.0,
-                                        );
-                                        let end_pos = Vec3::new(
-                                            end_position.x as f32 * TILE_SIZE,
-                                            end_position.y as f32 * TILE_SIZE,
-                                            1.0,
-                                        );
-                                        commands.spawn((
-                                            ItemAnimation {
-                                                start_pos,
-                                                end_pos,
-                                                timer: Timer::from_seconds(
-                                                    TICK_LENGTH,
-                                                    TimerMode::Once,
-                                                ),
-                                            },
-                                            Sprite::from_image(
-                                                asset_server.load(produced_item.sprite()),
-                                            ),
-                                            Transform {
-                                                translation: start_pos,
-                                                scale: Vec3::splat(ITEM_SIZE / IMAGE_SIZE),
-                                                ..Default::default()
-                                            },
-                                        ));
-                                    }
-                                }
-                            }
-                        } else if let Some(extractor) = tile.0.as_any().downcast_ref::<Extractor>()
-                        {
-                            let mut end_position = extractor.position;
-                            let item = extractor.extractor_type.spawn_item();
-                            match extractor.direction {
-                                Direction::Up => end_position.y += 1,
-                                Direction::Down => end_position.y -= 1,
-                                Direction::Left => end_position.x -= 1,
-                                Direction::Right => end_position.x += 1,
-                            }
-                            if let Some(target_tile) = world.tiles.get(&end_position) {
-                                let can_accept = if target_tile.0.as_any().is::<Conveyor>() {
-                                    if !filled_positions.contains(&end_position)
-                                        && empty_positions.contains(&end_position)
-                                    {
-                                        filled_positions.insert(end_position);
-                                        empty_positions.remove(&end_position);
-                                        true
+                                        if can_accept {
+                                            Some((
+                                                factory.factory_type.recipe().output,
+                                                *position,
+                                                dest_pos,
+                                            ))
+                                        } else {
+                                            None
+                                        }
                                     } else {
-                                        false
+                                        None
                                     }
-                                } else if target_tile.0.as_any().is::<Router>() {
-                                    if !filled_positions.contains(&end_position)
-                                        && empty_positions.contains(&end_position)
-                                    {
-                                        filled_positions.insert(end_position);
-                                        empty_positions.remove(&end_position);
-                                        true
-                                    } else {
-                                        false
-                                    }
-                                } else if let Some(storage) =
-                                    target_tile.0.as_any().downcast_ref::<Storage>()
-                                {
-                                    storage.storage_type.capacity().get(&item).unwrap_or(&0)
-                                        > storage.inventory.get(&item).unwrap_or(&0)
-                                } else if let Some(portal) =
-                                    target_tile.0.as_any().downcast_ref::<Portal>()
-                                {
-                                    portal.item.is_none()
                                 } else {
-                                    false
-                                };
-
-                                if can_accept {
-                                    let start_pos = Vec3::new(
-                                        position.x as f32 * TILE_SIZE,
-                                        position.y as f32 * TILE_SIZE,
-                                        1.0,
-                                    );
-                                    let end_pos = Vec3::new(
-                                        end_position.x as f32 * TILE_SIZE,
-                                        end_position.y as f32 * TILE_SIZE,
-                                        1.0,
-                                    );
-                                    commands.spawn((
-                                        ItemAnimation {
-                                            start_pos,
-                                            end_pos,
-                                            timer: Timer::from_seconds(
-                                                TICK_LENGTH,
-                                                TimerMode::Once,
-                                            ),
-                                        },
-                                        Sprite::from_image(asset_server.load(item.sprite())),
-                                        Transform {
-                                            translation: start_pos,
-                                            scale: Vec3::splat(ITEM_SIZE / IMAGE_SIZE),
-                                            ..Default::default()
-                                        },
-                                    ));
+                                    None
                                 }
                             }
+                            // For extractor
+                            else if let Some(extractor) =
+                                tile.0.as_any().downcast_ref::<Extractor>()
+                            {
+                                if extractor.item.is_none()
+                                    && world.tick_count % extractor.extractor_type.interval() == 0
+                                    && world.terrain.get(position)
+                                        == Some(&extractor.extractor_type.terrain())
+                                {
+                                    let mut dest_pos = *position;
+                                    match extractor.direction {
+                                        Direction::Up => dest_pos.y += 1,
+                                        Direction::Down => dest_pos.y -= 1,
+                                        Direction::Left => dest_pos.x -= 1,
+                                        Direction::Right => dest_pos.x += 1,
+                                    }
+
+                                    // Check if destination can accept the item
+                                    if let Some(dest_tile) = world.tiles.get(&dest_pos) {
+                                        let output_item = extractor.extractor_type.spawn_item();
+                                        let can_accept = if let Some(conveyor) =
+                                            dest_tile.0.as_any().downcast_ref::<Conveyor>()
+                                        {
+                                            empty_positions.contains(&dest_pos)
+                                                && !filled_positions.contains(&dest_pos)
+                                        } else if let Some(router) =
+                                            dest_tile.0.as_any().downcast_ref::<Router>()
+                                        {
+                                            empty_positions.contains(&dest_pos)
+                                                && !filled_positions.contains(&dest_pos)
+                                        } else if let Some(factory) =
+                                            dest_tile.0.as_any().downcast_ref::<Factory>()
+                                        {
+                                            factory
+                                                .factory_type
+                                                .capacity()
+                                                .get(&output_item)
+                                                .unwrap_or(&0)
+                                                > factory.inventory.get(&output_item).unwrap_or(&0)
+                                        } else if let Some(portal) =
+                                            dest_tile.0.as_any().downcast_ref::<Portal>()
+                                        {
+                                            portal.item.is_none()
+                                        } else {
+                                            false
+                                        };
+
+                                        if can_accept {
+                                            Some((
+                                                extractor.extractor_type.spawn_item(),
+                                                *position,
+                                                dest_pos,
+                                            ))
+                                        } else {
+                                            None
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
                         }
+                    };
+
+                    // If we can produce and move an item, spawn the animation
+                    if let Some((item, source_pos, dest_pos)) = can_produce_and_move {
+                        // Mark destination as filled so other animations won't try to move there
+                        filled_positions.insert(dest_pos);
+                        empty_positions.remove(&dest_pos);
+
+                        // Create animation
+                        let start_pos = Vec3::new(
+                            source_pos.x as f32 * TILE_SIZE,
+                            source_pos.y as f32 * TILE_SIZE,
+                            1.0,
+                        );
+                        let end_pos = Vec3::new(
+                            dest_pos.x as f32 * TILE_SIZE,
+                            dest_pos.y as f32 * TILE_SIZE,
+                            1.0,
+                        );
+
+                        commands.spawn((
+                            ItemAnimation {
+                                start_pos,
+                                end_pos,
+                                timer: Timer::from_seconds(TICK_LENGTH, TimerMode::Once),
+                            },
+                            Sprite::from_image(asset_server.load(item.sprite())),
+                            Transform {
+                                translation: start_pos,
+                                scale: Vec3::splat(ITEM_SIZE / IMAGE_SIZE),
+                                ..Default::default()
+                            },
+                        ));
                     }
                 }
-                Action::Teleport(_, _) => {}
+
+                _ => {}
             }
         }
         if let Err(err) = world.save("savegame.ff") {
@@ -2070,6 +2458,26 @@ fn update_tile_visuals(
                     2.0,
                 );
                 sprite.image = asset_server.load("embedded://textures/tiles/portal.png");
+            } else if let Some(junction) = tile.0.as_any().downcast_ref::<Junction>() {
+                transform.translation = Vec3::new(
+                    tile_sprite.pos.x as f32 * TILE_SIZE,
+                    tile_sprite.pos.y as f32 * TILE_SIZE,
+                    2.0,
+                );
+                sprite.image =
+                    asset_server.load("embedded://textures/tiles/conveyors/junction.png");
+
+                // No rotation needed for junctions
+                transform.rotation = Quat::IDENTITY;
+
+                if let Ok(children) = children_query.get(entity) {
+                    for child in children.iter() {
+                        if let Ok((mut child_sprite, _)) = child_sprite_query.get_mut(child) {
+                            // Hide the item in the junction's sprite since we handle items separately
+                            child_sprite.color = Color::NONE;
+                        }
+                    }
+                }
             } else {
                 sprite.color = css::GRAY.into();
             }
@@ -2138,19 +2546,27 @@ fn is_conveyor_pointing_to(
             return factory.direction == pointing_direction;
         } else if let Some(extractor) = tile.0.as_any().downcast_ref::<Extractor>() {
             return extractor.direction == pointing_direction;
+        } else if let Some(_junction) = tile.0.as_any().downcast_ref::<Junction>() {
+            // Junctions can accept items from all directions
+            return pointing_direction == Direction::Up
+                || pointing_direction == Direction::Down
+                || pointing_direction == Direction::Left
+                || pointing_direction == Direction::Right;
         }
     }
     false
 }
 
-fn get_tile_texture(tile_type: (u32, u32)) -> String {
+fn get_tile_texture(tile_type: (u32, u32)) -> &'static str {
     match tile_type {
         (0, 1) => "embedded://textures/tiles/none.png",
         (1, 1) => "embedded://textures/tiles/conveyors/back.png",
         (1, 2) => "embedded://textures/tiles/conveyors/router.png",
+        (1, 3) => "embedded://textures/tiles/conveyors/junction.png",
         (2, 1) => "embedded://textures/tiles/factories/rigtorium_smelter.png",
         (2, 2) => "embedded://textures/tiles/factories/flextorium_fabricator.png",
         (2, 3) => "embedded://textures/tiles/factories/conveyor_constructor.png",
+        (2, 4) => "embedded://textures/tiles/factories/rigtorium_rod_molder.png",
         (3, 1) => "embedded://textures/tiles/extractors/raw_rigtorium.png",
         (3, 2) => "embedded://textures/tiles/extractors/raw_flextorium.png",
         (3, 3) => "embedded://textures/tiles/extractors/electrine.png",
@@ -2158,7 +2574,6 @@ fn get_tile_texture(tile_type: (u32, u32)) -> String {
         (5, 1) => "embedded://textures/tiles/storage.png",
         _ => "embedded://textures/tiles/conveyors/back.png",
     }
-    .to_string()
 }
 
 fn rotate_direction_clockwise(dir: Direction) -> Direction {
@@ -2205,36 +2620,71 @@ fn manage_tiles(
     mut world: ResMut<WorldRes>,
     asset_server: Res<AssetServer>,
     mut commands: Commands,
+    hotkeys: Res<Hotkeys>,
+    inventory_query: Query<Entity, With<Inventory>>,
 ) {
-    if keyboard_input.pressed(KeyCode::Digit1) {
-        placer.tile_type = (1, 1);
-    }
-    if keyboard_input.pressed(KeyCode::Digit9) {
-        placer.tile_type = (1, 2);
-    }
-    if keyboard_input.pressed(KeyCode::Digit2) {
-        placer.tile_type = (2, 1);
-    }
-    if keyboard_input.pressed(KeyCode::Digit3) {
-        placer.tile_type = (3, 1);
-    }
-    if keyboard_input.pressed(KeyCode::Digit4) {
-        placer.tile_type = (3, 2);
-    }
-    if keyboard_input.pressed(KeyCode::Digit5) {
-        placer.tile_type = (3, 3);
-    }
-    if keyboard_input.pressed(KeyCode::Digit6) {
-        placer.tile_type = (4, 3);
-    }
-    if keyboard_input.pressed(KeyCode::Digit7) {
-        placer.tile_type = (2, 3);
-    }
-    if keyboard_input.pressed(KeyCode::Digit8) {
-        placer.tile_type = (4, 1);
-    }
-    if keyboard_input.pressed(KeyCode::Digit0) {
-        placer.tile_type = (2, 2);
+    if inventory_query.is_empty() {
+        if keyboard_input.just_pressed(KeyCode::Digit0) {
+            if let Some(&tile_type) = hotkeys.mappings.get(&0) {
+                placer.tile_type = tile_type;
+            } else {
+                placer.tile_type = (2, 2);
+            }
+        } else if keyboard_input.just_pressed(KeyCode::Digit1) {
+            if let Some(&tile_type) = hotkeys.mappings.get(&1) {
+                placer.tile_type = tile_type;
+            } else {
+                placer.tile_type = (1, 1);
+            }
+        } else if keyboard_input.just_pressed(KeyCode::Digit2) {
+            if let Some(&tile_type) = hotkeys.mappings.get(&2) {
+                placer.tile_type = tile_type;
+            } else {
+                placer.tile_type = (2, 1);
+            }
+        } else if keyboard_input.just_pressed(KeyCode::Digit3) {
+            if let Some(&tile_type) = hotkeys.mappings.get(&3) {
+                placer.tile_type = tile_type;
+            } else {
+                placer.tile_type = (3, 1);
+            }
+        } else if keyboard_input.just_pressed(KeyCode::Digit4) {
+            if let Some(&tile_type) = hotkeys.mappings.get(&4) {
+                placer.tile_type = tile_type;
+            } else {
+                placer.tile_type = (3, 2);
+            }
+        } else if keyboard_input.just_pressed(KeyCode::Digit5) {
+            if let Some(&tile_type) = hotkeys.mappings.get(&5) {
+                placer.tile_type = tile_type;
+            } else {
+                placer.tile_type = (3, 3);
+            }
+        } else if keyboard_input.just_pressed(KeyCode::Digit6) {
+            if let Some(&tile_type) = hotkeys.mappings.get(&6) {
+                placer.tile_type = tile_type;
+            } else {
+                placer.tile_type = (4, 3);
+            }
+        } else if keyboard_input.just_pressed(KeyCode::Digit7) {
+            if let Some(&tile_type) = hotkeys.mappings.get(&7) {
+                placer.tile_type = tile_type;
+            } else {
+                placer.tile_type = (2, 3);
+            }
+        } else if keyboard_input.just_pressed(KeyCode::Digit8) {
+            if let Some(&tile_type) = hotkeys.mappings.get(&8) {
+                placer.tile_type = tile_type;
+            } else {
+                placer.tile_type = (4, 1);
+            }
+        } else if keyboard_input.just_pressed(KeyCode::Digit9) {
+            if let Some(&tile_type) = hotkeys.mappings.get(&9) {
+                placer.tile_type = tile_type;
+            } else {
+                placer.tile_type = (1, 2);
+            }
+        }
     }
 
     for event in mouse_wheel_events.read() {
@@ -2266,54 +2716,57 @@ fn manage_tiles(
     };
     if let Some(screen_pos) = window.cursor_position() {
         if let Ok((camera, camera_transform)) = camera_query.single() {
-            let window_size = Vec2::new(window.width(), window.height());
-
-            let mut ndc = (screen_pos / window_size) * 2.0 - Vec2::ONE;
-            ndc.y *= -1.0;
-            let ndc_to_world =
-                camera_transform.compute_matrix() * camera.clip_from_view().inverse();
-            let world_pos = ndc_to_world.project_point3(ndc.extend(-1.0));
-            let world_pos: Vec2 = world_pos.truncate();
-
-            let grid_x = (world_pos.x / TILE_SIZE).round() as i32;
-            let grid_y = (world_pos.y / TILE_SIZE).round() as i32;
-            let pos = Position::new(grid_x, grid_y);
-
             if let Some(preview_entity) = placer.preview_entity {
                 commands.entity(preview_entity).despawn();
             }
+            if inventory_query.is_empty() {
+                let window_size = Vec2::new(window.width(), window.height());
 
-            let texture_path = get_tile_texture(placer.tile_type);
+                let mut ndc = (screen_pos / window_size) * 2.0 - Vec2::ONE;
+                ndc.y *= -1.0;
+                let ndc_to_world =
+                    camera_transform.compute_matrix() * camera.clip_from_view().inverse();
+                let world_pos = ndc_to_world.project_point3(ndc.extend(-1.0));
+                let world_pos: Vec2 = world_pos.truncate();
 
-            let preview_entity = commands
-                .spawn((
-                    Sprite {
-                        image: asset_server.load(texture_path),
-                        color: Color::srgba(1.0, 1.0, 1.0, 0.5),
-                        ..Default::default()
-                    },
-                    Transform {
-                        translation: Vec3::new(
-                            pos.x as f32 * TILE_SIZE,
-                            pos.y as f32 * TILE_SIZE,
-                            5.0,
-                        ),
-                        scale: Vec3::splat(TILE_SIZE / IMAGE_SIZE),
-                        rotation: match placer.direction {
-                            Direction::Up => Quat::IDENTITY,
-                            Direction::Down => Quat::from_rotation_z(PI),
-                            Direction::Left => Quat::from_rotation_z(FRAC_PI_2),
-                            Direction::Right => Quat::from_rotation_z(-FRAC_PI_2),
+                let grid_x = (world_pos.x / TILE_SIZE).round() as i32;
+                let grid_y = (world_pos.y / TILE_SIZE).round() as i32;
+                let pos = Position::new(grid_x, grid_y);
+
+                let texture_path = get_tile_texture(placer.tile_type);
+
+                let preview_entity = commands
+                    .spawn((
+                        Sprite {
+                            image: asset_server.load(texture_path),
+                            color: Color::srgba(1.0, 1.0, 1.0, 0.5),
+                            ..Default::default()
                         },
-                    },
-                ))
-                .id();
+                        Transform {
+                            translation: Vec3::new(
+                                pos.x as f32 * TILE_SIZE,
+                                pos.y as f32 * TILE_SIZE,
+                                5.0,
+                            ),
+                            scale: Vec3::splat(TILE_SIZE / IMAGE_SIZE),
+                            rotation: match placer.direction {
+                                Direction::Up => Quat::IDENTITY,
+                                Direction::Down => Quat::from_rotation_z(PI),
+                                Direction::Left => Quat::from_rotation_z(FRAC_PI_2),
+                                Direction::Right => Quat::from_rotation_z(-FRAC_PI_2),
+                            },
+                        },
+                    ))
+                    .id();
 
-            placer.preview_entity = Some(preview_entity);
+                placer.preview_entity = Some(preview_entity);
+            } else {
+                placer.preview_entity = None;
+            }
         }
     }
 
-    if mouse_button_input.pressed(MouseButton::Left) {
+    if mouse_button_input.pressed(MouseButton::Left) && inventory_query.is_empty() {
         if let Ok(window) = windows.single() {
             if let Some(screen_pos) = window.cursor_position() {
                 if let Ok((camera, camera_transform)) = camera_query.single() {
@@ -2346,6 +2799,19 @@ fn manage_tiles(
 
                             if let Some(entry) = world.tiles.get_mut(&pos) {
                                 *entry = new_tile;
+                                let new = world
+                                    .actions
+                                    .clone()
+                                    .into_iter()
+                                    .filter(|action| match action {
+                                        Action::Move(position, _, _) => *position != pos,
+                                        Action::Produce(position) => *position != pos,
+                                        Action::MoveRouter(position, _, _, _) => *position != pos,
+                                        Action::Teleport(position, _) => *position != pos,
+                                    })
+                                    .collect();
+
+                                world.actions = new;
                             }
                         }
                     } else {
@@ -2355,6 +2821,20 @@ fn manage_tiles(
                             let new_tile = get_new_tile(tile_type, pos, direction);
 
                             world.tiles.insert(pos, new_tile);
+
+                            let new = world
+                                .actions
+                                .clone()
+                                .into_iter()
+                                .filter(|action| match action {
+                                    Action::Move(position, _, _) => *position != pos,
+                                    Action::Produce(position) => *position != pos,
+                                    Action::MoveRouter(position, _, _, _) => *position != pos,
+                                    Action::Teleport(position, _) => *position != pos,
+                                })
+                                .collect();
+
+                            world.actions = new;
 
                             commands
                                 .spawn((
@@ -2388,7 +2868,7 @@ fn manage_tiles(
             }
         }
     }
-    if mouse_button_input.pressed(MouseButton::Right) {
+    if mouse_button_input.pressed(MouseButton::Right) && inventory_query.is_empty() {
         placer.tile_type = (0, 1);
         if let Ok(window) = windows.single() {
             if let Some(screen_pos) = window.cursor_position() {
@@ -2414,25 +2894,170 @@ fn manage_tiles(
         }
     }
 
-    if keyboard_input.pressed(KeyCode::KeyE) {
-        commands.spawn((
-            Node {
-                width: Val::Vw(100.0),
-                height: Val::Vh(100.0),
-                display: Display::Grid,
-                ..Default::default()
-            },
-            children![
+    if keyboard_input.just_pressed(KeyCode::KeyE) {
+        if let Ok(entity) = inventory_query.single() {
+            commands.entity(entity).despawn();
+        } else {
+            commands.spawn((
                 Node {
-                    width: Val::Vw(50.0),
-                    height: Val::Vh(75.0),
-                    justify_self: JustifySelf::Center,
-                    align_self: AlignSelf::Center,
+                    width: Val::Vw(100.0),
+                    height: Val::Vh(100.0),
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    justify_items: JustifyItems::Center,
+                    align_content: AlignContent::Center,
                     ..Default::default()
                 },
-                BackgroundColor(Color::WHITE)
-            ],
-        ));
+                Inventory {
+                    selected_category: 1,
+                },
+                children![(
+                    Node {
+                        width: Val::Vw(80.0),
+                        height: Val::Vh(80.0),
+                        display: Display::Flex,
+                        flex_direction: FlexDirection::Row,
+                        ..Default::default()
+                    },
+                    BackgroundColor(Color::srgb(0.16471, 0.18039, 0.21961)),
+                    BorderRadius::all(Val::Vh(5.0)),
+                    children![
+                        // Left panel - Categories (1/4 width)
+                        (
+                            Node {
+                                width: Val::Percent(25.0),
+                                height: Val::Percent(100.0),
+                                display: Display::Flex,
+                                flex_direction: FlexDirection::Column,
+                                padding: UiRect::all(Val::Px(10.0)),
+                                row_gap: Val::Px(10.0),
+                                ..Default::default()
+                            },
+                            BackgroundColor(Color::srgb(0.14, 0.16, 0.19)),
+                            children![
+                                // Category 1: Conveyors
+                                (
+                                    Node {
+                                        width: Val::Percent(100.0),
+                                        height: Val::Px(50.0),
+                                        align_items: AlignItems::Center,
+                                        justify_content: JustifyContent::Center,
+                                        ..Default::default()
+                                    },
+                                    BackgroundColor(Color::srgb(0.3, 0.5, 0.7)), // Selected by default
+                                    InventoryCategory { category: 1 },
+                                    Interaction::default(),
+                                    children![(
+                                        Text::new("1: Conveyors"),
+                                        TextFont {
+                                            font_size: 18.0,
+                                            ..Default::default()
+                                        },
+                                        TextColor(Color::WHITE),
+                                        TextLayout {
+                                            justify: JustifyText::Center,
+                                            ..Default::default()
+                                        }
+                                    )],
+                                ),
+                                // Category 2: Factories
+                                (
+                                    Node {
+                                        width: Val::Percent(100.0),
+                                        height: Val::Px(50.0),
+                                        align_items: AlignItems::Center,
+                                        justify_content: JustifyContent::Center,
+                                        ..Default::default()
+                                    },
+                                    BackgroundColor(Color::srgb(0.2, 0.22, 0.25)),
+                                    InventoryCategory { category: 2 },
+                                    Interaction::default(),
+                                    children![(
+                                        Text::new("2: Factories"),
+                                        TextFont {
+                                            font_size: 18.0,
+                                            ..Default::default()
+                                        },
+                                        TextColor(Color::WHITE),
+                                        TextLayout {
+                                            justify: JustifyText::Center,
+                                            ..Default::default()
+                                        }
+                                    )],
+                                ),
+                                // Category 3: Extractors
+                                (
+                                    Node {
+                                        width: Val::Percent(100.0),
+                                        height: Val::Px(50.0),
+                                        align_items: AlignItems::Center,
+                                        justify_content: JustifyContent::Center,
+                                        ..Default::default()
+                                    },
+                                    BackgroundColor(Color::srgb(0.2, 0.22, 0.25)),
+                                    InventoryCategory { category: 3 },
+                                    Interaction::default(),
+                                    children![(
+                                        Text::new("3: Extractors"),
+                                        TextFont {
+                                            font_size: 18.0,
+                                            ..Default::default()
+                                        },
+                                        TextColor(Color::WHITE),
+                                        TextLayout {
+                                            justify: JustifyText::Center,
+                                            ..Default::default()
+                                        }
+                                    )],
+                                ),
+                                // Category 4: Special
+                                (
+                                    Node {
+                                        width: Val::Percent(100.0),
+                                        height: Val::Px(50.0),
+                                        align_items: AlignItems::Center,
+                                        justify_content: JustifyContent::Center,
+                                        ..Default::default()
+                                    },
+                                    BackgroundColor(Color::srgb(0.2, 0.22, 0.25)),
+                                    InventoryCategory { category: 4 },
+                                    Interaction::default(),
+                                    children![(
+                                        Text::new("4: Special"),
+                                        TextFont {
+                                            font_size: 18.0,
+                                            ..Default::default()
+                                        },
+                                        TextColor(Color::WHITE),
+                                        TextLayout {
+                                            justify: JustifyText::Center,
+                                            ..Default::default()
+                                        }
+                                    )],
+                                ),
+                            ],
+                        ),
+                        // Right panel - Items (3/4 width)
+                        (
+                            Node {
+                                width: Val::Percent(75.0),
+                                height: Val::Percent(100.0),
+                                display: Display::Flex,
+                                flex_direction: FlexDirection::Row,
+                                flex_wrap: FlexWrap::Wrap,
+                                align_content: AlignContent::FlexStart,
+                                padding: UiRect::all(Val::Px(15.0)),
+                                row_gap: Val::Px(15.0),
+                                column_gap: Val::Px(15.0),
+                                ..Default::default()
+                            },
+                            BackgroundColor(Color::srgb(0.18, 0.2, 0.23)),
+                            InventoryItemsPanel,
+                        ),
+                    ],
+                ),],
+            ));
+        }
     }
 }
 
@@ -2459,12 +3084,21 @@ fn get_new_tile(
             }) as Box<dyn Tile>,
             tile_type,
         ),
+        (1, 3) => (
+            Box::new(Junction {
+                position,
+                horizontal_item: None,
+                vertical_item: None,
+            }) as Box<dyn Tile>,
+            tile_type,
+        ),
         (2, 1) => (
             Box::new(Factory {
                 factory_type: FactoryType::RigtoriumSmelter,
                 position,
                 direction,
                 inventory: HashMap::new(),
+                item: None,
             }) as Box<dyn Tile>,
             tile_type,
         ),
@@ -2474,6 +3108,7 @@ fn get_new_tile(
                 position,
                 direction,
                 inventory: HashMap::new(),
+                item: None,
             }) as Box<dyn Tile>,
             tile_type,
         ),
@@ -2483,6 +3118,17 @@ fn get_new_tile(
                 position,
                 direction,
                 inventory: HashMap::new(),
+                item: None,
+            }) as Box<dyn Tile>,
+            tile_type,
+        ),
+        (2, 4) => (
+            Box::new(Factory {
+                factory_type: FactoryType::RigtoriumRodMolder,
+                position,
+                direction,
+                inventory: HashMap::new(),
+                item: None,
             }) as Box<dyn Tile>,
             tile_type,
         ),
@@ -2491,6 +3137,7 @@ fn get_new_tile(
                 position,
                 direction,
                 extractor_type: ExtractorType::RawRigtorium,
+                item: None,
             }) as Box<dyn Tile>,
             tile_type,
         ),
@@ -2499,6 +3146,7 @@ fn get_new_tile(
                 position,
                 direction,
                 extractor_type: ExtractorType::RawFlextorium,
+                item: None,
             }) as Box<dyn Tile>,
             tile_type,
         ),
@@ -2507,6 +3155,7 @@ fn get_new_tile(
                 position,
                 direction,
                 extractor_type: ExtractorType::Electrine,
+                item: None,
             }) as Box<dyn Tile>,
             tile_type,
         ),
@@ -2540,21 +3189,398 @@ fn get_new_tile(
 fn move_camera(
     mut camera: Query<&mut Transform, With<Camera2d>>,
     keyboard_input: Res<ButtonInput<KeyCode>>,
+    inventory_query: Query<(), With<Inventory>>,
 ) {
-    let mut direction = Vec2::ZERO;
-    if keyboard_input.pressed(KeyCode::KeyW) {
-        direction.y = 1.0;
+    if inventory_query.is_empty() {
+        let mut direction = Vec2::ZERO;
+        if keyboard_input.pressed(KeyCode::KeyW) {
+            direction.y = 1.0;
+        }
+        if keyboard_input.pressed(KeyCode::KeyS) {
+            direction.y = -1.0;
+        }
+        if keyboard_input.pressed(KeyCode::KeyA) {
+            direction.x = -1.0;
+        }
+        if keyboard_input.pressed(KeyCode::KeyD) {
+            direction.x = 1.0;
+        }
+        if let Ok(mut camera) = camera.single_mut() {
+            camera.translation += direction.normalize_or_zero().extend(0.0) * CAMERA_SPEED;
+        }
     }
-    if keyboard_input.pressed(KeyCode::KeyS) {
-        direction.y = -1.0;
+}
+
+fn update_inventory_view(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    world: Res<WorldRes>,
+    inventory_query: Query<&Inventory>,
+    category_query: Query<(&InventoryCategory, Entity)>,
+    item_panel_query: Query<Entity, With<InventoryItemsPanel>>,
+    item_query: Query<Entity, With<InventoryItem>>,
+) {
+    // Only run if we have a selected category
+    if let Ok(inventory) = inventory_query.single() {
+        // Highlight the selected category
+        for (category, entity) in category_query.iter() {
+            let color = if category.category == inventory.selected_category {
+                Color::srgb(0.3, 0.5, 0.7)
+            } else {
+                Color::srgb(0.2, 0.22, 0.25)
+            };
+
+            commands.entity(entity).insert(BackgroundColor(color));
+        }
+
+        // Clear existing items
+        for entity in item_query.iter() {
+            commands.entity(entity).despawn();
+        }
+
+        // Get the items panel
+        if let Ok(panel_entity) = item_panel_query.single() {
+            // Filter resources by category (first number in the type tuple)
+            for ((type_a, type_b), count) in world.resources.iter() {
+                if *count > 0 && *type_a == inventory.selected_category {
+                    let texture_path = get_tile_texture((*type_a, *type_b));
+
+                    let child = commands
+                        .spawn((
+                            Node {
+                                width: Val::Px(80.0),
+                                height: Val::Px(80.0),
+                                display: Display::Flex,
+                                flex_direction: FlexDirection::Column,
+                                align_items: AlignItems::Center,
+                                justify_content: JustifyContent::Center,
+                                ..Default::default()
+                            },
+                            BackgroundColor(Color::srgb(0.25, 0.27, 0.3)),
+                            InventoryItem {
+                                tile_type: (*type_a, *type_b),
+                            },
+                            Interaction::default(),
+                            children![
+                                (
+                                    Node {
+                                        width: Val::Px(48.0),
+                                        height: Val::Px(48.0),
+                                        ..Default::default()
+                                    },
+                                    ImageNode::new(asset_server.load(texture_path))
+                                ),
+                                (
+                                    Text::new(format!("x{}", count)),
+                                    TextFont {
+                                        font_size: 16.0,
+                                        ..Default::default()
+                                    },
+                                    TextColor(Color::WHITE),
+                                    TextLayout {
+                                        justify: JustifyText::Center,
+                                        ..Default::default()
+                                    }
+                                ),
+                            ],
+                        ))
+                        .id();
+
+                    commands.entity(panel_entity).add_child(child);
+                }
+            }
+        }
     }
-    if keyboard_input.pressed(KeyCode::KeyA) {
-        direction.x = -1.0;
+}
+
+// System to handle category selection and item clicks
+fn handle_inventory_interaction(
+    mut commands: Commands,
+    category_query: Query<(&Interaction, &InventoryCategory), Changed<Interaction>>,
+    item_query: Query<(&Interaction, &InventoryItem, Entity)>,
+    mut inventory_query: Query<(Entity, &mut Inventory)>,
+    mut placer: ResMut<Placer>,
+    mouse_button_input: Res<ButtonInput<MouseButton>>,
+    context_menu_query: Query<Entity, With<ContextMenu>>,
+) {
+    // Close any open context menu when clicking elsewhere
+    if mouse_button_input.just_pressed(MouseButton::Left)
+        || mouse_button_input.just_pressed(MouseButton::Right)
+    {
+        let mut close_menu = true;
+
+        // Don't close if we're right-clicking on an item (we're about to open a new menu)
+        if mouse_button_input.just_pressed(MouseButton::Right) {
+            for (interaction, _, _) in item_query.iter() {
+                if matches!(interaction, Interaction::Hovered) {
+                    close_menu = false;
+                    break;
+                }
+            }
+        }
+
+        if close_menu {
+            for entity in context_menu_query.iter() {
+                commands.entity(entity).despawn();
+            }
+        }
     }
-    if keyboard_input.pressed(KeyCode::KeyD) {
-        direction.x = 1.0;
+
+    // Handle category selection (left click only)
+    for (interaction, category) in category_query.iter() {
+        if matches!(interaction, Interaction::Pressed) {
+            if let Ok((_, mut inventory)) = inventory_query.single_mut() {
+                inventory.selected_category = category.category;
+            }
+        }
     }
-    if let Ok(mut camera) = camera.single_mut() {
-        camera.translation += direction.normalize_or_zero().extend(0.0) * CAMERA_SPEED;
+
+    // Handle left-click on items
+    for (interaction, item, _) in item_query.iter() {
+        if matches!(interaction, Interaction::Pressed) {
+            // Left click - select the item
+            if let Ok((_, _)) = inventory_query.single() {
+                placer.tile_type = item.tile_type;
+            }
+        }
+    }
+
+    // Handle right-click on hovered items
+    if mouse_button_input.just_pressed(MouseButton::Right) {
+        for (interaction, item, _) in item_query.iter() {
+            if matches!(interaction, Interaction::Hovered) {
+                // Close any existing context menus
+                for entity in context_menu_query.iter() {
+                    commands.entity(entity).despawn();
+                }
+                println!("right");
+
+                // Create new context menu for the hovered item
+                commands
+                    .spawn((
+                        Node {
+                            width: Val::Px(150.0),
+                            height: Val::Auto,
+                            position_type: PositionType::Absolute,
+                            right: Val::Px(10.0),
+                            top: Val::Px(10.0),
+                            display: Display::Flex,
+                            flex_direction: FlexDirection::Column,
+                            padding: UiRect::all(Val::Px(5.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.2, 0.2, 0.2)),
+                        BorderRadius::all(Val::Px(5.0)),
+                        ContextMenu,
+                        ZIndex(100),
+                    ))
+                    .with_children(|parent| {
+                        parent
+                            .spawn((
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    height: Val::Px(30.0),
+                                    display: Display::Flex,
+                                    align_items: AlignItems::Center,
+                                    justify_content: JustifyContent::Center,
+                                    margin: UiRect::bottom(Val::Px(5.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgb(0.25, 0.25, 0.25)),
+                                BorderRadius::all(Val::Px(3.0)),
+                                HotkeyOption {
+                                    tile_type: item.tile_type,
+                                },
+                                Interaction::default(),
+                            ))
+                            .with_children(|button| {
+                                button.spawn((
+                                    Text::new("Assign Hotkey"),
+                                    TextFont {
+                                        font_size: 16.0,
+                                        ..Default::default()
+                                    },
+                                    TextColor(Color::WHITE),
+                                ));
+                            });
+                    });
+
+                break; // Only handle the first hovered item
+            }
+        }
+    }
+}
+
+fn handle_context_menu(
+    mut commands: Commands,
+    interaction_query: Query<
+        (&Interaction, &HotkeyOption),
+        (Changed<Interaction>, With<HotkeyOption>),
+    >,
+    context_menu_query: Query<Entity, With<ContextMenu>>,
+) {
+    for (interaction, hotkey_option) in interaction_query.iter() {
+        if matches!(interaction, Interaction::Pressed) {
+            // Replace the context menu with hotkey buttons
+            if let Some(menu_entity) = context_menu_query.iter().next() {
+                commands.entity(menu_entity).despawn();
+                println!("bacon");
+
+                // Create a new menu with number buttons 0-9
+                let new_menu = commands
+                    .spawn((
+                        Node {
+                            width: Val::Px(180.0),
+                            height: Val::Auto,
+                            position_type: PositionType::Absolute,
+                            right: Val::Px(10.0),
+                            top: Val::Px(10.0),
+                            display: Display::Flex,
+                            flex_direction: FlexDirection::Column,
+                            padding: UiRect::all(Val::Px(10.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.2, 0.2, 0.2)),
+                        BorderRadius::all(Val::Px(5.0)),
+                        ContextMenu,
+                        ZIndex(100),
+                    ))
+                    .id();
+
+                commands.entity(new_menu).with_children(|parent| {
+                    // Title
+                    parent
+                        .spawn(Node {
+                            width: Val::Percent(100.0),
+                            height: Val::Px(30.0),
+                            margin: UiRect::bottom(Val::Px(10.0)),
+                            align_items: AlignItems::Center,
+                            justify_content: JustifyContent::Center,
+                            ..default()
+                        })
+                        .with_children(|title| {
+                            title.spawn((
+                                Text::new("Select a key (0-9)"),
+                                TextFont {
+                                    font_size: 16.0,
+                                    ..Default::default()
+                                },
+                                TextColor(Color::WHITE),
+                            ));
+                        });
+
+                    // Row 1 (0-4)
+                    parent
+                        .spawn(Node {
+                            width: Val::Percent(100.0),
+                            height: Val::Px(30.0),
+                            display: Display::Flex,
+                            flex_direction: FlexDirection::Row,
+                            align_items: AlignItems::Center,
+                            justify_content: JustifyContent::Center,
+                            margin: UiRect::bottom(Val::Px(5.0)),
+                            ..default()
+                        })
+                        .with_children(|row| {
+                            for i in 0..5 {
+                                row.spawn((
+                                    Node {
+                                        width: Val::Px(25.0),
+                                        height: Val::Px(25.0),
+                                        margin: UiRect::horizontal(Val::Px(2.0)),
+                                        align_items: AlignItems::Center,
+                                        justify_content: JustifyContent::Center,
+                                        ..default()
+                                    },
+                                    BackgroundColor(Color::srgb(0.3, 0.3, 0.3)),
+                                    BorderRadius::all(Val::Px(3.0)),
+                                    HotkeyButton {
+                                        key: i,
+                                        tile_type: hotkey_option.tile_type,
+                                    },
+                                    Interaction::default(),
+                                ))
+                                .with_children(|button| {
+                                    button.spawn((
+                                        Text::new(format!("{}", i)),
+                                        TextFont {
+                                            font_size: 14.0,
+                                            ..Default::default()
+                                        },
+                                        TextColor(Color::WHITE),
+                                    ));
+                                });
+                            }
+                        });
+
+                    // Row 2 (5-9)
+                    parent
+                        .spawn(Node {
+                            width: Val::Percent(100.0),
+                            height: Val::Px(30.0),
+                            display: Display::Flex,
+                            flex_direction: FlexDirection::Row,
+                            align_items: AlignItems::Center,
+                            justify_content: JustifyContent::Center,
+                            ..default()
+                        })
+                        .with_children(|row| {
+                            for i in 5..10 {
+                                row.spawn((
+                                    Node {
+                                        width: Val::Px(25.0),
+                                        height: Val::Px(25.0),
+                                        margin: UiRect::horizontal(Val::Px(2.0)),
+                                        align_items: AlignItems::Center,
+                                        justify_content: JustifyContent::Center,
+                                        ..default()
+                                    },
+                                    BackgroundColor(Color::srgb(0.3, 0.3, 0.3)),
+                                    BorderRadius::all(Val::Px(3.0)),
+                                    HotkeyButton {
+                                        key: i,
+                                        tile_type: hotkey_option.tile_type,
+                                    },
+                                    Interaction::default(),
+                                ))
+                                .with_children(|button| {
+                                    button.spawn((
+                                        Text::new(format!("{}", i)),
+                                        TextFont {
+                                            font_size: 14.0,
+                                            ..Default::default()
+                                        },
+                                        TextColor(Color::WHITE),
+                                    ));
+                                });
+                            }
+                        });
+                });
+            }
+        }
+    }
+}
+
+// System to handle hotkey button clicks
+fn handle_hotkey_assignment(
+    mut commands: Commands,
+    interaction_query: Query<(&Interaction, &HotkeyButton), Changed<Interaction>>,
+    context_menu_query: Query<Entity, With<ContextMenu>>,
+    mut hotkeys: ResMut<Hotkeys>,
+) {
+    for (interaction, hotkey_button) in interaction_query.iter() {
+        if matches!(interaction, Interaction::Pressed) {
+            // Assign the hotkey
+            hotkeys
+                .mappings
+                .insert(hotkey_button.key, hotkey_button.tile_type);
+
+            // Close the context menu
+            for entity in context_menu_query.iter() {
+                commands.entity(entity).despawn();
+            }
+
+            // You could show a confirmation message here
+        }
     }
 }
