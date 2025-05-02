@@ -4,6 +4,7 @@ use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
 use bincode::{Decode, Encode, config};
 use flate2::{Compression, read::DeflateDecoder, write::DeflateEncoder};
 use noise::{NoiseFn, Perlin};
+use rand::{Rng, rng};
 use serde::{Deserialize, Serialize};
 use std::{
     any::Any,
@@ -87,6 +88,8 @@ enum SerializableTile {
         factory_type: FactoryType,
         inventory: HashMap<Item, u32>,
         item: Option<Item>,
+        interval: u32,
+        ticks: u32,
     },
 
     Storage {
@@ -428,6 +431,8 @@ impl WorldRes {
                                 factory_type: factory.factory_type,
                                 inventory: factory.inventory.clone(),
                                 item: factory.item,
+                                interval: factory.interval,
+                                ticks: factory.ticks,
                             }
                         } else if let Some(portal) = tile.as_any().downcast_ref::<Portal>() {
                             SerializableTile::Portal {
@@ -525,12 +530,16 @@ impl WorldRes {
                     factory_type,
                     inventory,
                     item,
+                    interval,
+                    ticks,
                 } => Box::new(Factory {
                     position,
                     direction,
                     factory_type,
                     inventory,
                     item,
+                    interval,
+                    ticks,
                 }),
                 SerializableTile::Storage {
                     position,
@@ -640,7 +649,7 @@ impl Default for WorldRes {
             terrain: HashMap::new(),
             loaded_chunks: HashSet::new(),
             resources,
-            world_seed: 59,
+            world_seed: rng().random_range(u32::MIN..u32::MAX),
             tick_timer: Timer::from_seconds(TICK_LENGTH, TimerMode::Repeating),
             tick_count: 0,
             actions: Vec::new(),
@@ -784,7 +793,6 @@ impl Tile for Router {
                         ));
                     }
                 }
-
                 next_output = next_output.next();
             }
         }
@@ -906,6 +914,8 @@ struct Factory {
     factory_type: FactoryType,
     inventory: HashMap<Item, u32>,
     item: Option<Item>,
+    interval: u32,
+    ticks: u32,
 }
 
 impl Factory {
@@ -1037,9 +1047,7 @@ impl Tile for Storage {
         None
     }
 
-    fn set_item(&mut self, _: Option<Item>) {
-        // Nothing to do here
-    }
+    fn set_item(&mut self, _: Option<Item>) {}
 
     fn get_item(&self) -> Option<Item> {
         return None;
@@ -1094,7 +1102,6 @@ fn can_tile_accept_item(tile: &(Box<dyn Tile>, (u32, u32)), item: Item) -> bool 
         factory.factory_type.capacity().get(&item).unwrap_or(&0)
             > factory.inventory.get(&item).unwrap_or(&0)
     } else if let Some(junction) = tile.0.as_any().downcast_ref::<Junction>() {
-        // For horizontal movement into another junction
         junction.horizontal_item.is_none()
     } else if let Some(portal) = tile.0.as_any().downcast_ref::<Portal>() {
         portal.item.is_none()
@@ -1106,20 +1113,18 @@ fn can_tile_accept_item(tile: &(Box<dyn Tile>, (u32, u32)), item: Item) -> bool 
 #[derive(Debug)]
 struct Junction {
     position: Position,
-    // For items that travel horizontally, record the item along with the incoming horizontal direction.
+
     horizontal_item: Option<(Item, Direction)>,
-    // For vertical movement, record the item along with the incoming vertical direction.
+
     vertical_item: Option<(Item, Direction)>,
 }
 impl Tile for Junction {
     fn tick(&self, world: &WorldRes) -> Option<Action> {
-        // Try horizontal lane first.
         if let Some((item, input_dir)) = self.horizontal_item {
-            // For horizontal, if the item came in from the left, then output to the right (and vice‐versa)
             let output = match input_dir {
                 Direction::Left => Direction::Right,
                 Direction::Right => Direction::Left,
-                _ => return None, // defensive: if something else was stored
+                _ => return None,
             };
             let end_pos = self.position.shift(output);
             if world.tiles.get(&end_pos).is_some()
@@ -1129,9 +1134,7 @@ impl Tile for Junction {
             }
         }
 
-        // Then try the vertical lane.
         if let Some((item, input_dir)) = self.vertical_item {
-            // If the item came in from below (i.e. input=Down) then it should be output upward (Up). If it came from above, then output Down.
             let output = match input_dir {
                 Direction::Down => Direction::Up,
                 Direction::Up => Direction::Down,
@@ -1147,9 +1150,7 @@ impl Tile for Junction {
         None
     }
 
-    fn set_item(&mut self, item: Option<Item>) {
-        // Nothing to do here
-    }
+    fn set_item(&mut self, _item: Option<Item>) {}
 
     fn get_item(&self) -> Option<Item> {
         return None;
@@ -1438,11 +1439,14 @@ fn tick_tiles(
             match action {
                 Action::Move(start, end, item) => {
                     let mut empty = false;
+                    let mut special = true;
                     if let Some(tile) = world.tiles.get_mut(&end) {
                         empty = tile.0.get_item().is_none();
                         if empty {
-                            if !tile.0.as_any().is::<Factory>() && !tile.0.as_any().is::<Junction>()
-                            {
+                            special = tile.0.as_any().is::<Factory>()
+                                || tile.0.as_any().is::<Junction>()
+                                || tile.0.as_any().is::<Extractor>();
+                            if !special {
                                 tile.0.set_item(Some(item));
                             } else if let Some(factory) =
                                 tile.0.as_any_mut().downcast_mut::<Factory>()
@@ -1451,10 +1455,10 @@ fn tick_tiles(
                                     > factory.inventory.get(&item).unwrap_or(&0_u32)
                                 {
                                     *factory.inventory.entry(item).or_insert(0) += 1;
-                                    if let Some(tile) = world.tiles.get_mut(&start) {
-                                        tile.0.set_item(None);
+                                    if let Some(start_tile) = world.tiles.get_mut(&start) {
+                                        start_tile.0.set_item(None);
                                         if let Some(start_junction) =
-                                            tile.0.as_any_mut().downcast_mut::<Junction>()
+                                            start_tile.0.as_any_mut().downcast_mut::<Junction>()
                                         {
                                             if start.x != end.x {
                                                 start_junction.horizontal_item = None;
@@ -1467,10 +1471,7 @@ fn tick_tiles(
                             } else if let Some(end_junction) =
                                 tile.0.as_any_mut().downcast_mut::<Junction>()
                             {
-                                // Determine if the movement was horizontal or vertical.
                                 if end.y == start.y {
-                                    // Horizontal movement:
-                                    // If the destination x is higher than start.x then the item came from left.
                                     let input_direction = if end.x > start.x {
                                         Direction::Left
                                     } else {
@@ -1491,11 +1492,8 @@ fn tick_tiles(
                                                 }
                                             }
                                         }
-                                        // (Optionally clear the item from the source tile.)
                                     }
                                 } else {
-                                    // Vertical movement:
-                                    // If end.y is greater than start.y then the item came from below.
                                     let input_direction = if end.y > start.y {
                                         Direction::Down
                                     } else {
@@ -1521,7 +1519,7 @@ fn tick_tiles(
                         }
                     }
                     if let Some(start_tile) = world.tiles.get_mut(&start) {
-                        if empty {
+                        if empty && !special {
                             start_tile.0.set_item(None);
 
                             if let Some(start_junction) =
@@ -1536,67 +1534,64 @@ fn tick_tiles(
                         }
                     }
                 }
-                Action::MoveRouter(start, end, item, last_output) => {
+                Action::MoveRouter(start, end, item, _last_output) => {
+                    let mut empty = false;
+                    let mut special = true;
                     if let Some(tile) = world.tiles.get_mut(&end) {
-                        if let Some(end_conveyor) = tile.0.as_any_mut().downcast_mut::<Conveyor>() {
-                            if end_conveyor.item.is_none() {
-                                end_conveyor.item = Some(item);
-                                if let Some(start_tile) = world.tiles.get_mut(&start) {
-                                    if let Some(start_router) =
-                                        start_tile.0.as_any_mut().downcast_mut::<Router>()
-                                    {
-                                        start_router.item = None;
-                                        start_router.last_output = last_output;
-                                    }
-                                }
-                            }
-                        } else if let Some(end_router) =
-                            tile.0.as_any_mut().downcast_mut::<Router>()
-                        {
-                            if end_router.item.is_none() {
-                                end_router.item = Some(item);
-                                if let Some(start_tile) = world.tiles.get_mut(&start) {
-                                    if let Some(start_router) =
-                                        start_tile.0.as_any_mut().downcast_mut::<Router>()
-                                    {
-                                        start_router.item = None;
-                                        start_router.last_output = last_output;
-                                    }
-                                }
-                            }
-                        } else if let Some(factory) = tile.0.as_any_mut().downcast_mut::<Factory>()
-                        {
-                            if factory.factory_type.capacity().get(&item).unwrap_or(&0)
-                                > factory.inventory.get(&item).unwrap_or(&0)
+                        empty = tile.0.get_item().is_none();
+                        if empty {
+                            special = tile.0.as_any().is::<Factory>()
+                                || tile.0.as_any().is::<Junction>()
+                                || tile.0.as_any().is::<Extractor>();
+                            if !special {
+                                tile.0.set_item(Some(item));
+                            } else if let Some(factory) =
+                                tile.0.as_any_mut().downcast_mut::<Factory>()
                             {
-                                *factory.inventory.entry(item).or_insert(0) += 1;
-                                if let Some(start_tile) = world.tiles.get_mut(&start) {
-                                    if let Some(start_router) =
-                                        start_tile.0.as_any_mut().downcast_mut::<Router>()
-                                    {
-                                        start_router.item = None;
-                                        start_router.last_output = last_output;
-                                    }
+                                if factory.factory_type.capacity().get(&item).unwrap_or(&0)
+                                    > factory.inventory.get(&item).unwrap_or(&0)
+                                {
+                                    *factory.inventory.entry(item).or_insert(0) += 1;
                                 }
-                            }
-                        } else if let Some(portal) = tile.0.as_any_mut().downcast_mut::<Portal>() {
-                            if portal.item.is_none() {
-                                portal.item = Some(item);
-                                if let Some(start_tile) = world.tiles.get_mut(&start) {
-                                    if let Some(start_router) =
-                                        start_tile.0.as_any_mut().downcast_mut::<Router>()
-                                    {
-                                        start_router.item = None;
-                                        start_router.last_output = last_output;
+                            } else if let Some(end_junction) =
+                                tile.0.as_any_mut().downcast_mut::<Junction>()
+                            {
+                                if end.y == start.y {
+                                    let input_direction = if end.x > start.x {
+                                        Direction::Left
+                                    } else {
+                                        Direction::Right
+                                    };
+                                    if end_junction.horizontal_item.is_none() {
+                                        end_junction.horizontal_item =
+                                            Some((item, input_direction));
+                                    }
+                                } else {
+                                    let input_direction = if end.y > start.y {
+                                        Direction::Down
+                                    } else {
+                                        Direction::Up
+                                    };
+                                    if end_junction.vertical_item.is_none() {
+                                        end_junction.vertical_item = Some((item, input_direction));
                                     }
                                 }
                             }
                         }
                     }
+                    if let Some(start_tile) = world.tiles.get_mut(&start) {
+                        if empty && !special {
+                            if let Some(start_router) =
+                                start_tile.0.as_any_mut().downcast_mut::<Router>()
+                            {
+                                start_router.item = None;
+                                start_router.last_output = start_router.last_output.next();
+                            }
+                        }
+                    }
                 }
                 Action::Produce(position) => {
-                    // Get the type of tile and item to produce
-                    let item_info: Option<(Item, Position)> = {
+                    /*let item_info: Option<(Item, Position)> = {
                         if let Some(tile) = world.tiles.get(&position) {
                             if let Some(factory) = tile.0.as_any().downcast_ref::<Factory>() {
                                 if factory.can_produce() {
@@ -1634,110 +1629,151 @@ fn tick_tiles(
                         } else {
                             None
                         }
+                    };*/
+
+                    let new_item = if let Some(tile) = world.tiles.get_mut(&position) {
+                        if let Some(factory) = tile.0.as_any_mut().downcast_mut::<Factory>() {
+                            Some(factory.factory_type.recipe().output)
+                        } else if let Some(extractor) =
+                            tile.0.as_any_mut().downcast_mut::<Extractor>()
+                        {
+                            Some(extractor.extractor_type.spawn_item())
+                        } else {
+                            return;
+                        }
+                    } else {
+                        None
+                    };
+                    let direction = if let Some(tile) = world.tiles.get_mut(&position) {
+                        if let Some(factory) = tile.0.as_any_mut().downcast_mut::<Factory>() {
+                            Some(factory.direction)
+                        } else if let Some(extractor) =
+                            tile.0.as_any_mut().downcast_mut::<Extractor>()
+                        {
+                            Some(extractor.direction)
+                        } else {
+                            return;
+                        }
+                    } else {
+                        None
                     };
 
-                    // Now do the production and movement in separate steps
-                    if let Some((item, dest_pos)) = item_info {
-                        // First, produce the item
+                    if let Some(unwraped_item) = new_item {
+                        let move_item;
                         if let Some(tile) = world.tiles.get_mut(&position) {
                             if let Some(factory) = tile.0.as_any_mut().downcast_mut::<Factory>() {
-                                factory.produce();
-                                factory.item = Some(item);
+                                if factory.ticks >= factory.interval {
+                                    dbg!(factory.ticks);
+                                    dbg!(factory.interval);
+                                    factory.produce();
+                                    factory.ticks = 0;
+                                    factory.item = Some(unwraped_item);
+                                    move_item = true;
+                                } else {
+                                    dbg!(factory.ticks);
+                                    println!("tick increase");
+                                    factory.ticks += 1;
+                                    move_item = false;
+                                }
                             } else if let Some(extractor) =
                                 tile.0.as_any_mut().downcast_mut::<Extractor>()
                             {
-                                extractor.item = Some(item);
-                            }
-                        }
-
-                        // Check if we can move the item immediately to the destination
-                        let can_move = if let Some(dest_tile) = world.tiles.get(&dest_pos) {
-                            if let Some(conveyor) = dest_tile.0.as_any().downcast_ref::<Conveyor>()
-                            {
-                                conveyor.item.is_none()
-                            } else if let Some(router) =
-                                dest_tile.0.as_any().downcast_ref::<Router>()
-                            {
-                                router.item.is_none()
-                            } else if let Some(factory) =
-                                dest_tile.0.as_any().downcast_ref::<Factory>()
-                            {
-                                factory.factory_type.capacity().get(&item).unwrap_or(&0)
-                                    > factory.inventory.get(&item).unwrap_or(&0)
-                            } else if let Some(portal) =
-                                dest_tile.0.as_any().downcast_ref::<Portal>()
-                            {
-                                portal.item.is_none()
+                                extractor.item = Some(unwraped_item);
+                                move_item = true;
                             } else {
-                                false
+                                move_item = false;
                             }
                         } else {
-                            false
-                        };
+                            move_item = false;
+                        }
+                        if move_item {
+                            let mut dest_pos = position;
+                            if let Some(unwraped_direction) = direction {
+                                match unwraped_direction {
+                                    Direction::Up => dest_pos.y += 1,
+                                    Direction::Down => dest_pos.y -= 1,
+                                    Direction::Left => dest_pos.x -= 1,
+                                    Direction::Right => dest_pos.x += 1,
+                                }
+                            }
 
-                        // If we can move it, do so
-                        if can_move {
-                            if let Some(dest_tile) = world.tiles.get_mut(&dest_pos) {
-                                if let Some(conveyor) =
-                                    dest_tile.0.as_any_mut().downcast_mut::<Conveyor>()
-                                {
-                                    conveyor.item = Some(item);
-                                    if let Some(src_tile) = world.tiles.get_mut(&position) {
-                                        if let Some(factory) =
-                                            src_tile.0.as_any_mut().downcast_mut::<Factory>()
+                            let mut empty = false;
+                            let mut special = true;
+                            if let Some(tile) = world.tiles.get_mut(&dest_pos) {
+                                empty = tile.0.get_item().is_none();
+                                if empty {
+                                    special = tile.0.as_any().is::<Factory>()
+                                        || tile.0.as_any().is::<Junction>()
+                                        || tile.0.as_any().is::<Extractor>();
+                                    if !special {
+                                        tile.0.set_item(Some(unwraped_item));
+                                    } else if let Some(factory) =
+                                        tile.0.as_any_mut().downcast_mut::<Factory>()
+                                    {
+                                        if factory
+                                            .factory_type
+                                            .capacity()
+                                            .get(&unwraped_item)
+                                            .unwrap_or(&0_u32)
+                                            > factory
+                                                .inventory
+                                                .get(&unwraped_item)
+                                                .unwrap_or(&0_u32)
                                         {
-                                            factory.item = None;
-                                        } else if let Some(extractor) =
-                                            src_tile.0.as_any_mut().downcast_mut::<Extractor>()
-                                        {
-                                            extractor.item = None;
+                                            *factory.inventory.entry(unwraped_item).or_insert(0) +=
+                                                1;
+                                            if let Some(start_tile) = world.tiles.get_mut(&position)
+                                            {
+                                                start_tile.0.set_item(None);
+                                            }
+                                        }
+                                    } else if let Some(end_junction) =
+                                        tile.0.as_any_mut().downcast_mut::<Junction>()
+                                    {
+                                        if dest_pos.y == position.y {
+                                            let input_direction = if dest_pos.x > position.x {
+                                                Direction::Left
+                                            } else {
+                                                Direction::Right
+                                            };
+                                            if end_junction.horizontal_item.is_none() {
+                                                end_junction.horizontal_item =
+                                                    Some((unwraped_item, input_direction));
+                                                if let Some(tile) = world.tiles.get_mut(&position) {
+                                                    tile.0.set_item(None);
+                                                    if let Some(start_junction) = tile
+                                                        .0
+                                                        .as_any_mut()
+                                                        .downcast_mut::<Junction>()
+                                                    {
+                                                        if position.x != dest_pos.x {
+                                                            start_junction.horizontal_item = None;
+                                                        } else if position.y != dest_pos.y {
+                                                            start_junction.vertical_item = None;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        } else {
+                                            let input_direction = if dest_pos.y > position.y {
+                                                Direction::Down
+                                            } else {
+                                                Direction::Up
+                                            };
+                                            if end_junction.vertical_item.is_none() {
+                                                end_junction.vertical_item =
+                                                    Some((unwraped_item, input_direction));
+                                                if let Some(tile) = world.tiles.get_mut(&position) {
+                                                    tile.0.set_item(None);
+                                                }
+                                            }
                                         }
                                     }
-                                } else if let Some(router) =
-                                    dest_tile.0.as_any_mut().downcast_mut::<Router>()
-                                {
-                                    router.item = Some(item);
-                                    if let Some(src_tile) = world.tiles.get_mut(&position) {
-                                        if let Some(factory) =
-                                            src_tile.0.as_any_mut().downcast_mut::<Factory>()
-                                        {
-                                            factory.item = None;
-                                        } else if let Some(extractor) =
-                                            src_tile.0.as_any_mut().downcast_mut::<Extractor>()
-                                        {
-                                            extractor.item = None;
-                                        }
-                                    }
-                                } else if let Some(factory) =
-                                    dest_tile.0.as_any_mut().downcast_mut::<Factory>()
-                                {
-                                    *factory.inventory.entry(item).or_insert(0) += 1;
-                                    if let Some(src_tile) = world.tiles.get_mut(&position) {
-                                        if let Some(factory) =
-                                            src_tile.0.as_any_mut().downcast_mut::<Factory>()
-                                        {
-                                            factory.item = None;
-                                        } else if let Some(extractor) =
-                                            src_tile.0.as_any_mut().downcast_mut::<Extractor>()
-                                        {
-                                            extractor.item = None;
-                                        }
-                                    }
-                                } else if let Some(portal) =
-                                    dest_tile.0.as_any_mut().downcast_mut::<Portal>()
-                                {
-                                    portal.item = Some(item);
-                                    if let Some(src_tile) = world.tiles.get_mut(&position) {
-                                        if let Some(factory) =
-                                            src_tile.0.as_any_mut().downcast_mut::<Factory>()
-                                        {
-                                            factory.item = None;
-                                        } else if let Some(extractor) =
-                                            src_tile.0.as_any_mut().downcast_mut::<Extractor>()
-                                        {
-                                            extractor.item = None;
-                                        }
-                                    }
+                                }
+                            }
+                            if let Some(start_tile) = world.tiles.get_mut(&position) {
+                                if empty && !special {
+                                    start_tile.0.set_item(None);
                                 }
                             }
                         }
@@ -1918,7 +1954,6 @@ fn tick_tiles(
                                 ));
                             }
                         } else if let Some(junction) = tile.0.as_any().downcast_ref::<Junction>() {
-                            // Determine direction based on the positions
                             let is_horizontal_movement = start.y == end.y;
                             let can_accept = if is_horizontal_movement {
                                 junction.horizontal_item.is_none()
@@ -1929,8 +1964,6 @@ fn tick_tiles(
                             if can_accept {
                                 filled_positions.insert(*end);
 
-                                // If the item is moving horizontally, remove it from the horizontal slot
-                                // Otherwise, remove it from the vertical slot
                                 if is_horizontal_movement {
                                     filled_positions.remove(start);
                                 } else {
@@ -2009,13 +2042,13 @@ fn tick_tiles(
                     }
                 }
                 Action::Produce(position) => {
-                    // We need to check if an extractor/factory has something to produce
-                    // and if the destination tile can accept it
                     let can_produce_and_move = {
                         if let Some(tile) = world.tiles.get(position) {
-                            // For factory
                             if let Some(factory) = tile.0.as_any().downcast_ref::<Factory>() {
-                                if factory.can_produce() && factory.item.is_none() {
+                                if factory.can_produce()
+                                    && factory.item.is_none()
+                                    && factory.ticks >= factory.interval
+                                {
                                     let mut dest_pos = *position;
                                     match factory.direction {
                                         Direction::Up => dest_pos.y += 1,
@@ -2024,17 +2057,12 @@ fn tick_tiles(
                                         Direction::Right => dest_pos.x += 1,
                                     }
 
-                                    // Check if destination can accept the item
                                     if let Some(dest_tile) = world.tiles.get(&dest_pos) {
                                         let output_item = factory.factory_type.recipe().output;
-                                        let can_accept = if let Some(conveyor) =
-                                            dest_tile.0.as_any().downcast_ref::<Conveyor>()
-                                        {
+                                        let can_accept = if dest_tile.0.as_any().is::<Conveyor>() {
                                             empty_positions.contains(&dest_pos)
                                                 && !filled_positions.contains(&dest_pos)
-                                        } else if let Some(router) =
-                                            dest_tile.0.as_any().downcast_ref::<Router>()
-                                        {
+                                        } else if dest_tile.0.as_any().is::<Router>() {
                                             empty_positions.contains(&dest_pos)
                                                 && !filled_positions.contains(&dest_pos)
                                         } else if let Some(dest_factory) =
@@ -2072,9 +2100,7 @@ fn tick_tiles(
                                 } else {
                                     None
                                 }
-                            }
-                            // For extractor
-                            else if let Some(extractor) =
+                            } else if let Some(extractor) =
                                 tile.0.as_any().downcast_ref::<Extractor>()
                             {
                                 if extractor.item.is_none()
@@ -2090,17 +2116,12 @@ fn tick_tiles(
                                         Direction::Right => dest_pos.x += 1,
                                     }
 
-                                    // Check if destination can accept the item
                                     if let Some(dest_tile) = world.tiles.get(&dest_pos) {
                                         let output_item = extractor.extractor_type.spawn_item();
-                                        let can_accept = if let Some(conveyor) =
-                                            dest_tile.0.as_any().downcast_ref::<Conveyor>()
-                                        {
+                                        let can_accept = if dest_tile.0.as_any().is::<Conveyor>() {
                                             empty_positions.contains(&dest_pos)
                                                 && !filled_positions.contains(&dest_pos)
-                                        } else if let Some(router) =
-                                            dest_tile.0.as_any().downcast_ref::<Router>()
-                                        {
+                                        } else if dest_tile.0.as_any().is::<Router>() {
                                             empty_positions.contains(&dest_pos)
                                                 && !filled_positions.contains(&dest_pos)
                                         } else if let Some(factory) =
@@ -2143,13 +2164,10 @@ fn tick_tiles(
                         }
                     };
 
-                    // If we can produce and move an item, spawn the animation
                     if let Some((item, source_pos, dest_pos)) = can_produce_and_move {
-                        // Mark destination as filled so other animations won't try to move there
                         filled_positions.insert(dest_pos);
                         empty_positions.remove(&dest_pos);
 
-                        // Create animation
                         let start_pos = Vec3::new(
                             source_pos.x as f32 * TILE_SIZE,
                             source_pos.y as f32 * TILE_SIZE,
@@ -2436,7 +2454,7 @@ fn update_tile_visuals(
                     2.0,
                 );
                 sprite.image = asset_server.load("embedded://textures/tiles/portal.png");
-            } else if let Some(junction) = tile.0.as_any().downcast_ref::<Junction>() {
+            } else if tile.0.as_any().is::<Junction>() {
                 transform.translation = Vec3::new(
                     tile_sprite.pos.x as f32 * TILE_SIZE,
                     tile_sprite.pos.y as f32 * TILE_SIZE,
@@ -2445,13 +2463,11 @@ fn update_tile_visuals(
                 sprite.image =
                     asset_server.load("embedded://textures/tiles/conveyors/junction.png");
 
-                // No rotation needed for junctions
                 transform.rotation = Quat::IDENTITY;
 
                 if let Ok(children) = children_query.get(entity) {
                     for child in children.iter() {
                         if let Ok((mut child_sprite, _)) = child_sprite_query.get_mut(child) {
-                            // Hide the item in the junction's sprite since we handle items separately
                             child_sprite.color = Color::NONE;
                         }
                     }
@@ -2525,7 +2541,6 @@ fn is_conveyor_pointing_to(
         } else if let Some(extractor) = tile.0.as_any().downcast_ref::<Extractor>() {
             return extractor.direction == pointing_direction;
         } else if let Some(_junction) = tile.0.as_any().downcast_ref::<Junction>() {
-            // Junctions can accept items from all directions
             return pointing_direction == Direction::Up
                 || pointing_direction == Direction::Down
                 || pointing_direction == Direction::Left
@@ -2900,7 +2915,6 @@ fn manage_tiles(
                     BackgroundColor(Color::srgb(0.16471, 0.18039, 0.21961)),
                     BorderRadius::all(Val::Vh(5.0)),
                     children![
-                        // Left panel - Categories (1/4 width)
                         (
                             Node {
                                 width: Val::Percent(25.0),
@@ -2913,7 +2927,6 @@ fn manage_tiles(
                             },
                             BackgroundColor(Color::srgb(0.14, 0.16, 0.19)),
                             children![
-                                // Category 1: Conveyors
                                 (
                                     Node {
                                         width: Val::Percent(100.0),
@@ -2922,7 +2935,7 @@ fn manage_tiles(
                                         justify_content: JustifyContent::Center,
                                         ..Default::default()
                                     },
-                                    BackgroundColor(Color::srgb(0.3, 0.5, 0.7)), // Selected by default
+                                    BackgroundColor(Color::srgb(0.3, 0.5, 0.7)),
                                     InventoryCategory { category: 1 },
                                     Interaction::default(),
                                     children![(
@@ -2938,7 +2951,6 @@ fn manage_tiles(
                                         }
                                     )],
                                 ),
-                                // Category 2: Factories
                                 (
                                     Node {
                                         width: Val::Percent(100.0),
@@ -2963,7 +2975,6 @@ fn manage_tiles(
                                         }
                                     )],
                                 ),
-                                // Category 3: Extractors
                                 (
                                     Node {
                                         width: Val::Percent(100.0),
@@ -2988,7 +2999,6 @@ fn manage_tiles(
                                         }
                                     )],
                                 ),
-                                // Category 4: Special
                                 (
                                     Node {
                                         width: Val::Percent(100.0),
@@ -3015,7 +3025,6 @@ fn manage_tiles(
                                 ),
                             ],
                         ),
-                        // Right panel - Items (3/4 width)
                         (
                             Node {
                                 width: Val::Percent(75.0),
@@ -3077,6 +3086,8 @@ fn get_new_tile(
                 direction,
                 inventory: HashMap::new(),
                 item: None,
+                interval: 2,
+                ticks: 0,
             }) as Box<dyn Tile>,
             tile_type,
         ),
@@ -3087,6 +3098,8 @@ fn get_new_tile(
                 direction,
                 inventory: HashMap::new(),
                 item: None,
+                interval: 2,
+                ticks: 0,
             }) as Box<dyn Tile>,
             tile_type,
         ),
@@ -3097,6 +3110,8 @@ fn get_new_tile(
                 direction,
                 inventory: HashMap::new(),
                 item: None,
+                interval: 5,
+                ticks: 0,
             }) as Box<dyn Tile>,
             tile_type,
         ),
@@ -3107,6 +3122,8 @@ fn get_new_tile(
                 direction,
                 inventory: HashMap::new(),
                 item: None,
+                interval: 2,
+                ticks: 0,
             }) as Box<dyn Tile>,
             tile_type,
         ),
@@ -3198,9 +3215,7 @@ fn update_inventory_view(
     item_panel_query: Query<Entity, With<InventoryItemsPanel>>,
     item_query: Query<Entity, With<InventoryItem>>,
 ) {
-    // Only run if we have a selected category
     if let Ok(inventory) = inventory_query.single() {
-        // Highlight the selected category
         for (category, entity) in category_query.iter() {
             let color = if category.category == inventory.selected_category {
                 Color::srgb(0.3, 0.5, 0.7)
@@ -3211,14 +3226,11 @@ fn update_inventory_view(
             commands.entity(entity).insert(BackgroundColor(color));
         }
 
-        // Clear existing items
         for entity in item_query.iter() {
             commands.entity(entity).despawn();
         }
 
-        // Get the items panel
         if let Ok(panel_entity) = item_panel_query.single() {
-            // Filter resources by category (first number in the type tuple)
             for ((type_a, type_b), count) in world.resources.iter() {
                 if *count > 0 && *type_a == inventory.selected_category {
                     let texture_path = get_tile_texture((*type_a, *type_b));
@@ -3271,7 +3283,6 @@ fn update_inventory_view(
     }
 }
 
-// System to handle category selection and item clicks
 fn handle_inventory_interaction(
     mut commands: Commands,
     category_query: Query<(&Interaction, &InventoryCategory), Changed<Interaction>>,
@@ -3281,13 +3292,11 @@ fn handle_inventory_interaction(
     mouse_button_input: Res<ButtonInput<MouseButton>>,
     context_menu_query: Query<Entity, With<ContextMenu>>,
 ) {
-    // Close any open context menu when clicking elsewhere
     if mouse_button_input.just_pressed(MouseButton::Left)
         || mouse_button_input.just_pressed(MouseButton::Right)
     {
         let mut close_menu = true;
 
-        // Don't close if we're right-clicking on an item (we're about to open a new menu)
         if mouse_button_input.just_pressed(MouseButton::Right) {
             for (interaction, _, _) in item_query.iter() {
                 if matches!(interaction, Interaction::Hovered) {
@@ -3304,7 +3313,6 @@ fn handle_inventory_interaction(
         }
     }
 
-    // Handle category selection (left click only)
     for (interaction, category) in category_query.iter() {
         if matches!(interaction, Interaction::Pressed) {
             if let Ok((_, mut inventory)) = inventory_query.single_mut() {
@@ -3313,27 +3321,22 @@ fn handle_inventory_interaction(
         }
     }
 
-    // Handle left-click on items
     for (interaction, item, _) in item_query.iter() {
         if matches!(interaction, Interaction::Pressed) {
-            // Left click - select the item
             if let Ok((_, _)) = inventory_query.single() {
                 placer.tile_type = item.tile_type;
             }
         }
     }
 
-    // Handle right-click on hovered items
     if mouse_button_input.just_pressed(MouseButton::Right) {
         for (interaction, item, _) in item_query.iter() {
             if matches!(interaction, Interaction::Hovered) {
-                // Close any existing context menus
                 for entity in context_menu_query.iter() {
                     commands.entity(entity).despawn();
                 }
                 println!("right");
 
-                // Create new context menu for the hovered item
                 commands
                     .spawn((
                         Node {
@@ -3383,7 +3386,7 @@ fn handle_inventory_interaction(
                             });
                     });
 
-                break; // Only handle the first hovered item
+                break;
             }
         }
     }
@@ -3399,12 +3402,10 @@ fn handle_context_menu(
 ) {
     for (interaction, hotkey_option) in interaction_query.iter() {
         if matches!(interaction, Interaction::Pressed) {
-            // Replace the context menu with hotkey buttons
             if let Some(menu_entity) = context_menu_query.iter().next() {
                 commands.entity(menu_entity).despawn();
                 println!("bacon");
 
-                // Create a new menu with number buttons 0-9
                 let new_menu = commands
                     .spawn((
                         Node {
@@ -3426,7 +3427,6 @@ fn handle_context_menu(
                     .id();
 
                 commands.entity(new_menu).with_children(|parent| {
-                    // Title
                     parent
                         .spawn(Node {
                             width: Val::Percent(100.0),
@@ -3447,7 +3447,6 @@ fn handle_context_menu(
                             ));
                         });
 
-                    // Row 1 (0-4)
                     parent
                         .spawn(Node {
                             width: Val::Percent(100.0),
@@ -3491,7 +3490,6 @@ fn handle_context_menu(
                             }
                         });
 
-                    // Row 2 (5-9)
                     parent
                         .spawn(Node {
                             width: Val::Percent(100.0),
@@ -3539,7 +3537,6 @@ fn handle_context_menu(
     }
 }
 
-// System to handle hotkey button clicks
 fn handle_hotkey_assignment(
     mut commands: Commands,
     interaction_query: Query<(&Interaction, &HotkeyButton), Changed<Interaction>>,
@@ -3548,17 +3545,13 @@ fn handle_hotkey_assignment(
 ) {
     for (interaction, hotkey_button) in interaction_query.iter() {
         if matches!(interaction, Interaction::Pressed) {
-            // Assign the hotkey
             hotkeys
                 .mappings
                 .insert(hotkey_button.key, hotkey_button.tile_type);
 
-            // Close the context menu
             for entity in context_menu_query.iter() {
                 commands.entity(entity).despawn();
             }
-
-            // You could show a confirmation message here
         }
     }
 }
