@@ -4,7 +4,7 @@ version = "0.2.1"
 edition = "2024"
 
 [dependencies]
-bevy = "0.16.0"
+bevy = "0.16"
 bevy-inspector-egui = "0.31.0"
 bevy_embedded_assets = "0.13.0-rc.1"
 bincode = "2.0.1"

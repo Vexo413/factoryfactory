@@ -107,12 +107,18 @@ enum SerializableTile {
         horizontal_item: Option<(Item, Direction)>,
         vertical_item: Option<(Item, Direction)>,
     },
+    Core {
+        position: Position,
+        interval: u32,
+        ticks: u32,
+        tile_id: (u8, u8),
+    },
 }
 
 #[derive(Serialize, Deserialize, Encode, Decode)]
 struct SerializableWorld {
-    tiles: HashMap<u64, (SerializableTile, (u32, u32))>,
-    resources: HashMap<(u32, u32), u32>,
+    tiles: HashMap<u64, (SerializableTile, (u8, u8))>,
+    resources: HashMap<(u8, u8), u32>,
     world_seed: u32,
     tick_count: i32,
 }
@@ -255,7 +261,8 @@ enum Action {
     Move(Position, Position, Item),
     MoveRouter(Position, Position, Item, RouterOutputIndex),
     Produce(Position),
-    Teleport(Position, Item),
+    Teleport(Position, (u8, u8)),
+    IncreaseTicks(Position),
 }
 
 #[derive(PartialEq, Eq, Clone, Hash, Debug, Copy, Deserialize, Serialize, Encode, Decode)]
@@ -281,10 +288,10 @@ impl Item {
             Item::Conveyor => "embedded://textures/items/conveyor.png",
         }
     }
-    fn is_also_tile(&self) -> bool {
+    fn to_tile(&self) -> Option<(u8, u8)> {
         match self {
-            Item::Conveyor => true,
-            _ => false,
+            Item::Conveyor => Some((1, 1)),
+            _ => None,
         }
     }
 }
@@ -332,7 +339,7 @@ impl Position {
 #[derive(Resource)]
 struct Placer {
     direction: Direction,
-    tile_type: (u32, u32),
+    tile_type: (u8, u8),
     preview_entity: Option<Entity>,
     zoom_level: f32,
 }
@@ -350,10 +357,10 @@ impl Default for Placer {
 
 #[derive(Resource)]
 struct WorldRes {
-    tiles: HashMap<Position, (Box<dyn Tile>, (u32, u32))>,
+    tiles: HashMap<Position, (Box<dyn Tile>, (u8, u8))>,
     terrain: HashMap<Position, TerrainTileType>,
     loaded_chunks: HashSet<ChunkPosition>,
-    resources: HashMap<(u32, u32), u32>,
+    resources: HashMap<(u8, u8), u32>,
     world_seed: u32,
     tick_timer: Timer,
     tick_count: i32,
@@ -362,12 +369,12 @@ struct WorldRes {
 
 #[derive(Component)]
 struct Inventory {
-    selected_category: u32,
+    selected_category: u8,
 }
 
 #[derive(Component)]
 struct InventoryCategory {
-    category: u32,
+    category: u8,
 }
 
 #[derive(Component)]
@@ -375,25 +382,25 @@ struct InventoryItemsPanel;
 
 #[derive(Component)]
 struct InventoryItem {
-    tile_type: (u32, u32),
+    tile_type: (u8, u8),
 }
 #[derive(Component)]
 struct ContextMenu;
 
 #[derive(Component)]
 struct HotkeyOption {
-    tile_type: (u32, u32),
+    tile_type: (u8, u8),
 }
 
 #[derive(Component)]
 struct HotkeyButton {
     key: u8,
-    tile_type: (u32, u32),
+    tile_type: (u8, u8),
 }
 
 #[derive(Resource, Default)]
 struct Hotkeys {
-    mappings: HashMap<u8, (u32, u32)>,
+    mappings: HashMap<u8, (u8, u8)>,
 }
 
 impl WorldRes {
@@ -444,6 +451,13 @@ impl WorldRes {
                                 position: junction.position,
                                 horizontal_item: junction.horizontal_item,
                                 vertical_item: junction.vertical_item,
+                            }
+                        } else if let Some(core) = tile.as_any().downcast_ref::<Core>() {
+                            SerializableTile::Core {
+                                position: core.position,
+                                interval: core.interval,
+                                ticks: core.ticks,
+                                tile_id: core.tile_id,
                             }
                         } else {
                             SerializableTile::Conveyor {
@@ -562,6 +576,17 @@ impl WorldRes {
                     horizontal_item,
                     vertical_item,
                 }),
+                SerializableTile::Core {
+                    position,
+                    interval,
+                    ticks,
+                    tile_id,
+                } => Box::new(Core {
+                    position,
+                    interval,
+                    ticks,
+                    tile_id,
+                }),
             };
 
             tiles.insert(pos, (boxed_tile, id));
@@ -644,8 +669,22 @@ impl Default for WorldRes {
         resources.insert((4, 1), 10);
         resources.insert((5, 1), 10);
 
+        let mut tiles: HashMap<Position, (Box<dyn Tile + 'static>, (u8, u8))> = HashMap::new();
+        tiles.insert(
+            Position::new(0, 0),
+            (
+                Box::new(Core {
+                    position: Position::new(0, 0),
+                    interval: 10,
+                    ticks: 0,
+                    tile_id: (0, 1),
+                }),
+                (6, 1),
+            ),
+        );
+
         world.unwrap_or(WorldRes {
-            tiles: HashMap::new(),
+            tiles,
             terrain: HashMap::new(),
             loaded_chunks: HashSet::new(),
             resources,
@@ -1070,7 +1109,9 @@ struct Portal {
 impl Tile for Portal {
     fn tick(&self, _world: &WorldRes) -> Option<Action> {
         if let Some(item) = self.item {
-            return Some(Action::Teleport(self.position, item));
+            if let Some(tile) = item.to_tile() {
+                return Some(Action::Teleport(self.position, tile));
+            }
         }
 
         None
@@ -1093,7 +1134,7 @@ impl Tile for Portal {
     }
 }
 
-fn can_tile_accept_item(tile: &(Box<dyn Tile>, (u32, u32)), item: Item) -> bool {
+fn can_tile_accept_item(tile: &(Box<dyn Tile>, (u8, u8)), item: Item) -> bool {
     if let Some(conveyor) = tile.0.as_any().downcast_ref::<Conveyor>() {
         conveyor.item.is_none()
     } else if let Some(router) = tile.0.as_any().downcast_ref::<Router>() {
@@ -1164,6 +1205,38 @@ impl Tile for Junction {
     }
 }
 
+#[derive(Debug)]
+struct Core {
+    position: Position,
+    interval: u32,
+    ticks: u32,
+    tile_id: (u8, u8),
+}
+
+impl Tile for Core {
+    fn tick(&self, _world: &WorldRes) -> Option<Action> {
+        dbg!(self.ticks);
+        if self.ticks >= self.interval {
+            println!("created: {:?}", self.tile_id);
+            return Some(Action::Teleport(self.position, self.tile_id));
+        } else {
+            return Some(Action::IncreaseTicks(self.position));
+        }
+    }
+    fn set_item(&mut self, _item: Option<Item>) {}
+
+    fn get_item(&self) -> Option<Item> {
+        return None;
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
 fn main() {
     App::new()
         .add_plugins((
@@ -1206,7 +1279,11 @@ fn main() {
                 handle_inventory_interaction,
                 handle_context_menu,
                 handle_hotkey_assignment,
-            ),
+                handle_core_context_menu,
+                update_core_menu_ui,
+                update_core_progress_text,
+            )
+                .chain(),
         )
         .run();
 }
@@ -1663,15 +1740,11 @@ fn tick_tiles(
                         if let Some(tile) = world.tiles.get_mut(&position) {
                             if let Some(factory) = tile.0.as_any_mut().downcast_mut::<Factory>() {
                                 if factory.ticks >= factory.interval {
-                                    dbg!(factory.ticks);
-                                    dbg!(factory.interval);
                                     factory.produce();
                                     factory.ticks = 0;
                                     factory.item = Some(unwraped_item);
                                     move_item = true;
                                 } else {
-                                    dbg!(factory.ticks);
-                                    println!("tick increase");
                                     factory.ticks += 1;
                                     move_item = false;
                                 }
@@ -1779,13 +1852,23 @@ fn tick_tiles(
                         }
                     }
                 }
-                Action::Teleport(position, item) => {
+                Action::Teleport(position, tile) => {
                     if let Some(tiles) = world.tiles.get_mut(&position) {
                         if let Some(portal) = tiles.0.as_any_mut().downcast_mut::<Portal>() {
-                            if item.is_also_tile() {
-                                portal.item = None;
-                                *world.resources.entry((1, 1)).or_insert(0) += 1;
-                            }
+                            portal.item = None;
+
+                            *world.resources.entry(tile).or_insert(0) += 1;
+                        } else if let Some(core) = tiles.0.as_any_mut().downcast_mut::<Core>() {
+                            core.ticks = 0;
+
+                            *world.resources.entry(tile).or_insert(0) += 1;
+                        }
+                    }
+                }
+                Action::IncreaseTicks(position) => {
+                    if let Some(tiles) = world.tiles.get_mut(&position) {
+                        if let Some(core) = tiles.0.as_any_mut().downcast_mut::<Core>() {
+                            core.ticks += 1;
                         }
                     }
                 }
@@ -2231,6 +2314,7 @@ fn sort_moves_topologically(actions: Vec<Action>, world: &WorldRes) -> Vec<Actio
             Action::Teleport(pos, _) => {
                 position_to_output_action.entry(*pos).or_default().push(i);
             }
+            Action::IncreaseTicks(_) => {}
         }
     }
 
@@ -2472,6 +2556,23 @@ fn update_tile_visuals(
                         }
                     }
                 }
+            } else if tile.0.as_any().is::<Core>() {
+                transform.translation = Vec3::new(
+                    tile_sprite.pos.x as f32 * TILE_SIZE,
+                    tile_sprite.pos.y as f32 * TILE_SIZE,
+                    2.0,
+                );
+                sprite.image = asset_server.load("embedded://textures/tiles/core.png");
+
+                transform.rotation = Quat::IDENTITY;
+
+                if let Ok(children) = children_query.get(entity) {
+                    for child in children.iter() {
+                        if let Ok((mut child_sprite, _)) = child_sprite_query.get_mut(child) {
+                            child_sprite.color = Color::NONE;
+                        }
+                    }
+                }
             } else {
                 sprite.color = css::GRAY.into();
             }
@@ -2550,7 +2651,7 @@ fn is_conveyor_pointing_to(
     false
 }
 
-fn get_tile_texture(tile_type: (u32, u32)) -> &'static str {
+fn get_tile_texture(tile_type: (u8, u8)) -> &'static str {
     match tile_type {
         (0, 1) => "embedded://textures/tiles/none.png",
         (1, 1) => "embedded://textures/tiles/conveyors/back.png",
@@ -2565,8 +2666,47 @@ fn get_tile_texture(tile_type: (u32, u32)) -> &'static str {
         (3, 3) => "embedded://textures/tiles/extractors/electrine.png",
         (4, 1) => "embedded://textures/tiles/portal.png",
         (5, 1) => "embedded://textures/tiles/storage.png",
+        (6, 1) => "embedded://textures/tiles/core.png",
         _ => "embedded://textures/tiles/conveyors/back.png",
     }
+}
+fn get_tile_core_interval(tile_type: (u8, u8)) -> u32 {
+    match tile_type {
+        (1, 1) => 60,  // Conveyor - 1 minute
+        (1, 2) => 80,  // Router - 1 minute 20 seconds
+        (1, 3) => 90,  // Junction - 1 minute 30 seconds
+        (2, 1) => 150, // Rigtorium Smelter - 2 minutes 30 seconds
+        (2, 2) => 150, // Flextorium Fabricator - 2 minutes 30 seconds
+        (2, 3) => 300, // Conveyor Constructor - 5 minutes
+        (2, 4) => 180, // Rigtorium Rod Molder - 3 minutes
+        (3, 1) => 240, // Raw Rigtorium Extractor - 4 minutes
+        (3, 2) => 240, // Raw Flextorium Extractor - 4 minutes
+        (3, 3) => 180, // Electrine Extractor - 3 minutes
+        (4, 1) => 100, // Portal - 1 minute 40 seconds
+        _ => 60,       // Default - 1 minute
+    }
+}
+
+fn format_tile_id(tile_type: (u8, u8)) -> String {
+    format!("{}, {}", tile_type.0, tile_type.1)
+}
+
+fn get_tile_name(tile_type: (u8, u8)) -> String {
+    match tile_type {
+        (1, 1) => "Conveyor",
+        (1, 2) => "Router",
+        (1, 3) => "Junction",
+        (2, 1) => "Rigtorium Smelter",
+        (2, 2) => "Flextorium Fabricator",
+        (2, 3) => "Conveyor Constructor",
+        (2, 4) => "Rigtorium Rod Molder",
+        (3, 1) => "Raw Rigtorium Extractor",
+        (3, 2) => "Raw Flextorium Extractor",
+        (3, 3) => "Electrine Extractor",
+        (4, 1) => "Portal",
+        _ => "Unknown Tile",
+    }
+    .to_string()
 }
 
 fn rotate_direction_clockwise(dir: Direction) -> Direction {
@@ -2614,6 +2754,7 @@ fn manage_tiles(
     asset_server: Res<AssetServer>,
     mut commands: Commands,
     hotkeys: Res<Hotkeys>,
+    core_context_query: Query<&CoreContextMenu>,
     inventory_query: Query<Entity, With<Inventory>>,
 ) {
     if inventory_query.is_empty() {
@@ -2777,21 +2918,47 @@ fn manage_tiles(
                     let pos = Position::new(grid_x, grid_y);
                     let tile_type = placer.tile_type;
                     let direction = placer.direction;
+                    if pos != Position::new(0, 0) {
+                        if world.tiles.contains_key(&pos) {
+                            let current_tile_id =
+                                world.tiles.get(&pos).map(|(_, id)| *id).unwrap_or((0, 1));
 
-                    if world.tiles.contains_key(&pos) {
-                        let current_tile_id =
-                            world.tiles.get(&pos).map(|(_, id)| *id).unwrap_or((0, 1));
+                            if *world.resources.get(&tile_type).unwrap_or(&0) >= 1
+                                || placer.tile_type == current_tile_id
+                            {
+                                *world.resources.entry(current_tile_id).or_insert(0) += 1;
+                                *world.resources.entry(tile_type).or_insert(0) -= 1;
 
-                        if *world.resources.get(&tile_type).unwrap_or(&0) >= 1
-                            || placer.tile_type == current_tile_id
-                        {
-                            *world.resources.entry(current_tile_id).or_insert(0) += 1;
-                            *world.resources.entry(tile_type).or_insert(0) -= 1;
+                                let new_tile = get_new_tile(tile_type, pos, direction);
 
-                            let new_tile = get_new_tile(tile_type, pos, direction);
+                                if let Some(entry) = world.tiles.get_mut(&pos) {
+                                    *entry = new_tile;
+                                    let new = world
+                                        .actions
+                                        .clone()
+                                        .into_iter()
+                                        .filter(|action| match action {
+                                            Action::Move(position, _, _) => *position != pos,
+                                            Action::Produce(position) => *position != pos,
+                                            Action::MoveRouter(position, _, _, _) => {
+                                                *position != pos
+                                            }
+                                            Action::Teleport(position, _) => *position != pos,
+                                            Action::IncreaseTicks(position) => *position != pos,
+                                        })
+                                        .collect();
 
-                            if let Some(entry) = world.tiles.get_mut(&pos) {
-                                *entry = new_tile;
+                                    world.actions = new;
+                                }
+                            }
+                        } else {
+                            if *world.resources.get(&tile_type).unwrap_or(&0) >= 1 {
+                                *world.resources.entry(tile_type).or_insert(0) -= 1;
+
+                                let new_tile = get_new_tile(tile_type, pos, direction);
+
+                                world.tiles.insert(pos, new_tile);
+
                                 let new = world
                                     .actions
                                     .clone()
@@ -2801,60 +2968,326 @@ fn manage_tiles(
                                         Action::Produce(position) => *position != pos,
                                         Action::MoveRouter(position, _, _, _) => *position != pos,
                                         Action::Teleport(position, _) => *position != pos,
+                                        Action::IncreaseTicks(position) => *position != pos,
                                     })
                                     .collect();
 
                                 world.actions = new;
+
+                                commands
+                                    .spawn((
+                                        Sprite::from_image(
+                                            asset_server.load(get_tile_texture(tile_type)),
+                                        ),
+                                        Transform {
+                                            translation: Vec3::new(
+                                                pos.x as f32 * TILE_SIZE,
+                                                pos.y as f32 * TILE_SIZE,
+                                                0.0,
+                                            ),
+                                            scale: Vec3::splat(TILE_SIZE / IMAGE_SIZE),
+                                            ..Default::default()
+                                        },
+                                        TileSprite { pos },
+                                    ))
+                                    .with_children(|parent| {
+                                        parent.spawn((
+                                            Sprite::from_image(
+                                                asset_server
+                                                    .load("embedded://textures/items/none.png"),
+                                            ),
+                                            Transform::from_scale(Vec3::splat(0.5)),
+                                        ));
+                                    });
                             }
                         }
                     } else {
-                        if *world.resources.get(&tile_type).unwrap_or(&0) >= 1 {
-                            *world.resources.entry(tile_type).or_insert(0) -= 1;
-
-                            let new_tile = get_new_tile(tile_type, pos, direction);
-
-                            world.tiles.insert(pos, new_tile);
-
-                            let new = world
-                                .actions
-                                .clone()
-                                .into_iter()
-                                .filter(|action| match action {
-                                    Action::Move(position, _, _) => *position != pos,
-                                    Action::Produce(position) => *position != pos,
-                                    Action::MoveRouter(position, _, _, _) => *position != pos,
-                                    Action::Teleport(position, _) => *position != pos,
-                                })
-                                .collect();
-
-                            world.actions = new;
-
-                            commands
-                                .spawn((
-                                    Sprite::from_image(
-                                        asset_server
-                                            .load("embedded://textures/tiles/conveyors/back.png"),
-                                    ),
-                                    Transform {
-                                        translation: Vec3::new(
-                                            pos.x as f32 * TILE_SIZE,
-                                            pos.y as f32 * TILE_SIZE,
-                                            0.0,
-                                        ),
-                                        scale: Vec3::splat(TILE_SIZE / IMAGE_SIZE),
-                                        ..Default::default()
-                                    },
-                                    Name::new(format!("({}, {})", tile_type.0, tile_type.1)),
-                                    TileSprite { pos },
-                                ))
-                                .with_children(|parent| {
-                                    parent.spawn((
-                                        Sprite::from_image(
-                                            asset_server.load("embedded://textures/items/none.png"),
-                                        ),
-                                        Transform::from_scale(Vec3::splat(0.5)),
+                        if core_context_query.is_empty() {
+                            if let Some(tile) = world.tiles.get(&pos) {
+                                if let Some(core) = tile.0.as_any().downcast_ref::<Core>() {
+                                    // Show Core context menu when clicking on a Core tile
+                                    commands.spawn((
+                                        Node {
+                                            width: Val::Vw(80.0),
+                                            height: Val::Vh(80.0),
+                                            position_type: PositionType::Absolute,
+                                            left: Val::Vw(10.0),
+                                            top: Val::Vh(10.0),
+                                            display: Display::Flex,
+                                            flex_direction: FlexDirection::Column,
+                                            padding: UiRect::all(Val::Px(20.0)),
+                                            ..default()
+                                        },
+                                        BackgroundColor(Color::srgb(0.18, 0.2, 0.23)),
+                                        BorderRadius::all(Val::Px(10.0)),
+                                        CoreContextMenu {
+                                            position: pos,
+                                            selected_category: 1,
+                                        },
+                                        children![
+                                            (
+                                                Node {
+                                                    width: Val::Percent(100.0),
+                                                    height: Val::Px(40.0),
+                                                    margin: UiRect::bottom(Val::Px(20.0)),
+                                                    align_items: AlignItems::Center,
+                                                    justify_content: JustifyContent::Center,
+                                                    ..default()
+                                                },
+                                                children![(
+                                                    Text::new("Core Configuration"),
+                                                    TextFont {
+                                                        font_size: 24.0,
+                                                        ..Default::default()
+                                                    },
+                                                    TextColor(Color::WHITE)
+                                                )],
+                                            ),
+                                            (
+                                                Node {
+                                                    width: Val::Percent(100.0),
+                                                    height: Val::Px(60.0),
+                                                    margin: UiRect::bottom(Val::Px(20.0)),
+                                                    display: Display::Flex,
+                                                    flex_direction: FlexDirection::Column,
+                                                    ..default()
+                                                },
+                                                children![
+                                                    (
+                                                        Text::new(format!(
+                                                            "Current production: {} ({})",
+                                                            get_tile_name(core.tile_id),
+                                                            format_tile_id(core.tile_id)
+                                                        )),
+                                                        TextFont {
+                                                            font_size: 16.0,
+                                                            ..Default::default()
+                                                        },
+                                                        TextColor(Color::WHITE),
+                                                        Node {
+                                                            margin: UiRect::bottom(Val::Px(10.0)),
+                                                            ..Default::default()
+                                                        }
+                                                    ),
+                                                    (
+                                                        Text::new(format!(
+                                                            "Progress: {}/{} seconds",
+                                                            core.ticks, core.interval
+                                                        )),
+                                                        TextFont {
+                                                            font_size: 16.0,
+                                                            ..Default::default()
+                                                        },
+                                                        TextColor(Color::srgb(0.8, 0.8, 0.8)),
+                                                        Name::new("core_progress")
+                                                    )
+                                                ],
+                                            ),
+                                            (
+                                                Node {
+                                                    width: Val::Percent(100.0),
+                                                    height: Val::Percent(100.0),
+                                                    display: Display::Flex,
+                                                    flex_direction: FlexDirection::Row,
+                                                    ..Default::default()
+                                                },
+                                                children![
+                                                    // Categories panel
+                                                    (
+                                                        Node {
+                                                            width: Val::Percent(25.0),
+                                                            height: Val::Percent(100.0),
+                                                            display: Display::Flex,
+                                                            flex_direction: FlexDirection::Column,
+                                                            padding: UiRect::all(Val::Px(10.0)),
+                                                            row_gap: Val::Px(10.0),
+                                                            ..Default::default()
+                                                        },
+                                                        BackgroundColor(Color::srgb(
+                                                            0.14, 0.16, 0.19
+                                                        )),
+                                                        BorderRadius::all(Val::Px(10.0)),
+                                                        children![
+                                                            (
+                                                                Node {
+                                                                    width: Val::Percent(100.0),
+                                                                    height: Val::Px(50.0),
+                                                                    align_items: AlignItems::Center,
+                                                                    justify_content:
+                                                                        JustifyContent::Center,
+                                                                    ..Default::default()
+                                                                },
+                                                                BackgroundColor(Color::srgb(
+                                                                    0.3, 0.5, 0.7
+                                                                )),
+                                                                CoreCategory { category: 1 },
+                                                                Interaction::default(),
+                                                                BorderRadius::all(Val::Px(10.0)),
+                                                                children![(
+                                                                    Text::new("1: Conveyors"),
+                                                                    TextFont {
+                                                                        font_size: 18.0,
+                                                                        ..Default::default()
+                                                                    },
+                                                                    TextColor(Color::WHITE),
+                                                                    TextLayout {
+                                                                        justify:
+                                                                            JustifyText::Center,
+                                                                        ..Default::default()
+                                                                    }
+                                                                )],
+                                                            ),
+                                                            (
+                                                                Node {
+                                                                    width: Val::Percent(100.0),
+                                                                    height: Val::Px(50.0),
+                                                                    align_items: AlignItems::Center,
+                                                                    justify_content:
+                                                                        JustifyContent::Center,
+                                                                    ..Default::default()
+                                                                },
+                                                                BackgroundColor(Color::srgb(
+                                                                    0.2, 0.22, 0.25
+                                                                )),
+                                                                CoreCategory { category: 2 },
+                                                                Interaction::default(),
+                                                                BorderRadius::all(Val::Px(10.0)),
+                                                                children![(
+                                                                    Text::new("2: Factories"),
+                                                                    TextFont {
+                                                                        font_size: 18.0,
+                                                                        ..Default::default()
+                                                                    },
+                                                                    TextColor(Color::WHITE),
+                                                                    TextLayout {
+                                                                        justify:
+                                                                            JustifyText::Center,
+                                                                        ..Default::default()
+                                                                    }
+                                                                )],
+                                                            ),
+                                                            (
+                                                                Node {
+                                                                    width: Val::Percent(100.0),
+                                                                    height: Val::Px(50.0),
+                                                                    align_items: AlignItems::Center,
+                                                                    justify_content:
+                                                                        JustifyContent::Center,
+                                                                    ..Default::default()
+                                                                },
+                                                                BackgroundColor(Color::srgb(
+                                                                    0.2, 0.22, 0.25
+                                                                )),
+                                                                CoreCategory { category: 3 },
+                                                                Interaction::default(),
+                                                                BorderRadius::all(Val::Px(10.0)),
+                                                                children![(
+                                                                    Text::new("3: Extractors"),
+                                                                    TextFont {
+                                                                        font_size: 18.0,
+                                                                        ..Default::default()
+                                                                    },
+                                                                    TextColor(Color::WHITE),
+                                                                    TextLayout {
+                                                                        justify:
+                                                                            JustifyText::Center,
+                                                                        ..Default::default()
+                                                                    }
+                                                                )],
+                                                            ),
+                                                            (
+                                                                Node {
+                                                                    width: Val::Percent(100.0),
+                                                                    height: Val::Px(50.0),
+                                                                    align_items: AlignItems::Center,
+                                                                    justify_content:
+                                                                        JustifyContent::Center,
+                                                                    ..Default::default()
+                                                                },
+                                                                BackgroundColor(Color::srgb(
+                                                                    0.2, 0.22, 0.25
+                                                                )),
+                                                                CoreCategory { category: 4 },
+                                                                Interaction::default(),
+                                                                BorderRadius::all(Val::Px(10.0)),
+                                                                children![(
+                                                                    Text::new("4: Special"),
+                                                                    TextFont {
+                                                                        font_size: 18.0,
+                                                                        ..Default::default()
+                                                                    },
+                                                                    TextColor(Color::WHITE),
+                                                                    TextLayout {
+                                                                        justify:
+                                                                            JustifyText::Center,
+                                                                        ..Default::default()
+                                                                    }
+                                                                )],
+                                                            ),
+                                                        ],
+                                                    ),
+                                                    // Items grid panel
+                                                    (
+                                                        Node {
+                                                            width: Val::Percent(75.0),
+                                                            height: Val::Percent(100.0),
+                                                            display: Display::Flex,
+                                                            flex_direction: FlexDirection::Row,
+                                                            flex_wrap: FlexWrap::Wrap,
+                                                            align_content: AlignContent::FlexStart,
+                                                            padding: UiRect::all(Val::Px(15.0)),
+                                                            row_gap: Val::Px(15.0),
+                                                            column_gap: Val::Px(15.0),
+                                                            ..Default::default()
+                                                        },
+                                                        BackgroundColor(Color::srgb(
+                                                            0.18, 0.2, 0.23
+                                                        )),
+                                                        CoreItemsPanel,
+                                                    ),
+                                                ],
+                                            ),
+                                            (
+                                                Node {
+                                                    width: Val::Percent(100.0),
+                                                    height: Val::Px(40.0),
+                                                    display: Display::Flex,
+                                                    justify_content: JustifyContent::Center,
+                                                    margin: UiRect::top(Val::Px(20.0)),
+                                                    ..default()
+                                                },
+                                                children![(
+                                                    Button,
+                                                    Node {
+                                                        width: Val::Px(120.0),
+                                                        height: Val::Px(40.0),
+                                                        align_content: AlignContent::Center,
+                                                        justify_content: JustifyContent::Center,
+                                                        display: Display::Grid,
+                                                        ..default()
+                                                    },
+                                                    BackgroundColor(Color::srgb(0.6, 0.3, 0.3)),
+                                                    BorderRadius::all(Val::Px(5.0)),
+                                                    Interaction::default(),
+                                                    Name::new("close_button"),
+                                                    children![(
+                                                        Text::new("Close"),
+                                                        TextFont {
+                                                            font_size: 16.0,
+                                                            ..default()
+                                                        },
+                                                        TextColor(Color::WHITE),
+                                                    )]
+                                                )],
+                                            )
+                                        ],
                                     ));
-                                });
+                                } else {
+                                    commands.spawn((Node::default(), Text::default()));
+                                }
+                            } else {
+                                commands.spawn((Node::default(), Text::default()));
+                            }
                         }
                     }
                 }
@@ -2878,9 +3311,10 @@ fn manage_tiles(
                     let grid_x = (world_pos.x / TILE_SIZE).round() as i32;
                     let grid_y = (world_pos.y / TILE_SIZE).round() as i32;
                     let pos = Position::new(grid_x, grid_y);
-
-                    if let Some(entry) = world.tiles.remove_entry(&pos) {
-                        *world.resources.entry(entry.1.1).or_insert(0) += 1;
+                    if pos != Position::new(0, 0) {
+                        if let Some(entry) = world.tiles.remove_entry(&pos) {
+                            *world.resources.entry(entry.1.1).or_insert(0) += 1;
+                        }
                     }
                 }
             }
@@ -2893,166 +3327,183 @@ fn manage_tiles(
         } else {
             commands.spawn((
                 Node {
-                    width: Val::Vw(100.0),
-                    height: Val::Vh(100.0),
-                    align_items: AlignItems::Center,
-                    justify_content: JustifyContent::Center,
-                    justify_items: JustifyItems::Center,
-                    align_content: AlignContent::Center,
-                    ..Default::default()
+                    width: Val::Vw(80.0),
+                    height: Val::Vh(80.0),
+                    position_type: PositionType::Absolute,
+                    left: Val::Vw(10.0),
+                    top: Val::Vh(10.0),
+                    display: Display::Flex,
+                    flex_direction: FlexDirection::Row,
+                    padding: UiRect::all(Val::Px(20.0)),
+                    ..default()
                 },
                 Inventory {
                     selected_category: 1,
                 },
-                children![(
-                    Node {
-                        width: Val::Vw(80.0),
-                        height: Val::Vh(80.0),
-                        display: Display::Flex,
-                        flex_direction: FlexDirection::Row,
-                        ..Default::default()
-                    },
-                    BackgroundColor(Color::srgb(0.16471, 0.18039, 0.21961)),
-                    BorderRadius::all(Val::Vh(5.0)),
-                    children![
-                        (
-                            Node {
-                                width: Val::Percent(25.0),
-                                height: Val::Percent(100.0),
-                                display: Display::Flex,
-                                flex_direction: FlexDirection::Column,
-                                padding: UiRect::all(Val::Px(10.0)),
-                                row_gap: Val::Px(10.0),
-                                ..Default::default()
-                            },
-                            BackgroundColor(Color::srgb(0.14, 0.16, 0.19)),
-                            children![
-                                (
-                                    Node {
-                                        width: Val::Percent(100.0),
-                                        height: Val::Px(50.0),
-                                        align_items: AlignItems::Center,
-                                        justify_content: JustifyContent::Center,
+                BorderRadius::all(Val::Px(10.0)),
+                BackgroundColor(Color::srgb(0.18, 0.2, 0.23)),
+                children![
+                    (
+                        Node {
+                            width: Val::Percent(25.0),
+                            height: Val::Percent(100.0),
+                            display: Display::Flex,
+                            flex_direction: FlexDirection::Column,
+                            padding: UiRect::all(Val::Px(10.0)),
+                            row_gap: Val::Px(10.0),
+                            ..Default::default()
+                        },
+                        BackgroundColor(Color::srgb(0.14, 0.16, 0.19)),
+                        BorderRadius::all(Val::Px(10.0)),
+                        children![
+                            (
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    height: Val::Px(50.0),
+                                    align_items: AlignItems::Center,
+                                    justify_content: JustifyContent::Center,
+                                    ..Default::default()
+                                },
+                                BackgroundColor(Color::srgb(0.3, 0.5, 0.7)),
+                                InventoryCategory { category: 1 },
+                                Interaction::default(),
+                                BorderRadius::all(Val::Px(10.0)),
+                                children![(
+                                    Text::new("1: Conveyors"),
+                                    TextFont {
+                                        font_size: 18.0,
                                         ..Default::default()
                                     },
-                                    BackgroundColor(Color::srgb(0.3, 0.5, 0.7)),
-                                    InventoryCategory { category: 1 },
-                                    Interaction::default(),
-                                    children![(
-                                        Text::new("1: Conveyors"),
-                                        TextFont {
-                                            font_size: 18.0,
-                                            ..Default::default()
-                                        },
-                                        TextColor(Color::WHITE),
-                                        TextLayout {
-                                            justify: JustifyText::Center,
-                                            ..Default::default()
-                                        }
-                                    )],
-                                ),
-                                (
-                                    Node {
-                                        width: Val::Percent(100.0),
-                                        height: Val::Px(50.0),
-                                        align_items: AlignItems::Center,
-                                        justify_content: JustifyContent::Center,
+                                    TextColor(Color::WHITE),
+                                    TextLayout {
+                                        justify: JustifyText::Center,
+                                        ..Default::default()
+                                    }
+                                )],
+                            ),
+                            (
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    height: Val::Px(50.0),
+                                    align_items: AlignItems::Center,
+                                    justify_content: JustifyContent::Center,
+                                    ..Default::default()
+                                },
+                                BackgroundColor(Color::srgb(0.2, 0.22, 0.25)),
+                                InventoryCategory { category: 2 },
+                                Interaction::default(),
+                                BorderRadius::all(Val::Px(10.0)),
+                                children![(
+                                    Text::new("2: Factories"),
+                                    TextFont {
+                                        font_size: 18.0,
                                         ..Default::default()
                                     },
-                                    BackgroundColor(Color::srgb(0.2, 0.22, 0.25)),
-                                    InventoryCategory { category: 2 },
-                                    Interaction::default(),
-                                    children![(
-                                        Text::new("2: Factories"),
-                                        TextFont {
-                                            font_size: 18.0,
-                                            ..Default::default()
-                                        },
-                                        TextColor(Color::WHITE),
-                                        TextLayout {
-                                            justify: JustifyText::Center,
-                                            ..Default::default()
-                                        }
-                                    )],
-                                ),
-                                (
-                                    Node {
-                                        width: Val::Percent(100.0),
-                                        height: Val::Px(50.0),
-                                        align_items: AlignItems::Center,
-                                        justify_content: JustifyContent::Center,
+                                    TextColor(Color::WHITE),
+                                    TextLayout {
+                                        justify: JustifyText::Center,
+                                        ..Default::default()
+                                    }
+                                )],
+                            ),
+                            (
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    height: Val::Px(50.0),
+                                    align_items: AlignItems::Center,
+                                    justify_content: JustifyContent::Center,
+                                    ..Default::default()
+                                },
+                                BackgroundColor(Color::srgb(0.2, 0.22, 0.25)),
+                                InventoryCategory { category: 3 },
+                                Interaction::default(),
+                                BorderRadius::all(Val::Px(10.0)),
+                                children![(
+                                    Text::new("3: Extractors"),
+                                    TextFont {
+                                        font_size: 18.0,
                                         ..Default::default()
                                     },
-                                    BackgroundColor(Color::srgb(0.2, 0.22, 0.25)),
-                                    InventoryCategory { category: 3 },
-                                    Interaction::default(),
-                                    children![(
-                                        Text::new("3: Extractors"),
-                                        TextFont {
-                                            font_size: 18.0,
-                                            ..Default::default()
-                                        },
-                                        TextColor(Color::WHITE),
-                                        TextLayout {
-                                            justify: JustifyText::Center,
-                                            ..Default::default()
-                                        }
-                                    )],
-                                ),
-                                (
-                                    Node {
-                                        width: Val::Percent(100.0),
-                                        height: Val::Px(50.0),
-                                        align_items: AlignItems::Center,
-                                        justify_content: JustifyContent::Center,
+                                    TextColor(Color::WHITE),
+                                    TextLayout {
+                                        justify: JustifyText::Center,
+                                        ..Default::default()
+                                    }
+                                )],
+                            ),
+                            (
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    height: Val::Px(50.0),
+                                    align_items: AlignItems::Center,
+                                    justify_content: JustifyContent::Center,
+                                    ..Default::default()
+                                },
+                                BackgroundColor(Color::srgb(0.2, 0.22, 0.25)),
+                                InventoryCategory { category: 4 },
+                                Interaction::default(),
+                                BorderRadius::all(Val::Px(10.0)),
+                                children![(
+                                    Text::new("4: Special"),
+                                    TextFont {
+                                        font_size: 18.0,
                                         ..Default::default()
                                     },
-                                    BackgroundColor(Color::srgb(0.2, 0.22, 0.25)),
-                                    InventoryCategory { category: 4 },
-                                    Interaction::default(),
-                                    children![(
-                                        Text::new("4: Special"),
-                                        TextFont {
-                                            font_size: 18.0,
-                                            ..Default::default()
-                                        },
-                                        TextColor(Color::WHITE),
-                                        TextLayout {
-                                            justify: JustifyText::Center,
-                                            ..Default::default()
-                                        }
-                                    )],
-                                ),
-                            ],
-                        ),
-                        (
-                            Node {
-                                width: Val::Percent(75.0),
-                                height: Val::Percent(100.0),
-                                display: Display::Flex,
-                                flex_direction: FlexDirection::Row,
-                                flex_wrap: FlexWrap::Wrap,
-                                align_content: AlignContent::FlexStart,
-                                padding: UiRect::all(Val::Px(15.0)),
-                                row_gap: Val::Px(15.0),
-                                column_gap: Val::Px(15.0),
-                                ..Default::default()
-                            },
-                            BackgroundColor(Color::srgb(0.18, 0.2, 0.23)),
-                            InventoryItemsPanel,
-                        ),
-                    ],
-                ),],
+                                    TextColor(Color::WHITE),
+                                    TextLayout {
+                                        justify: JustifyText::Center,
+                                        ..Default::default()
+                                    }
+                                )],
+                            ),
+                        ],
+                    ),
+                    (
+                        Node {
+                            width: Val::Percent(75.0),
+                            height: Val::Percent(100.0),
+                            display: Display::Flex,
+                            flex_direction: FlexDirection::Row,
+                            flex_wrap: FlexWrap::Wrap,
+                            align_content: AlignContent::FlexStart,
+                            padding: UiRect::all(Val::Px(15.0)),
+                            row_gap: Val::Px(15.0),
+                            column_gap: Val::Px(15.0),
+                            ..Default::default()
+                        },
+                        InventoryItemsPanel,
+                    ),
+                ],
             ));
         }
+        return;
     }
 }
 
+#[derive(Component)]
+struct CoreContextMenu {
+    position: Position,
+    selected_category: u8,
+}
+
+#[derive(Component)]
+struct CoreCategory {
+    category: u8,
+}
+
+#[derive(Component)]
+struct CoreItemsPanel;
+
+#[derive(Component)]
+struct TileTypeOption {
+    tile_type: (u8, u8),
+}
+
 fn get_new_tile(
-    tile_type: (u32, u32),
+    tile_type: (u8, u8),
     position: Position,
     direction: Direction,
-) -> (Box<dyn Tile>, (u32, u32)) {
+) -> (Box<dyn Tile>, (u8, u8)) {
     match tile_type {
         (1, 1) => (
             Box::new(Conveyor {
@@ -3170,6 +3621,15 @@ fn get_new_tile(
             }) as Box<dyn Tile>,
             tile_type,
         ),
+        (6, 1) => (
+            Box::new(Core {
+                position,
+                interval: 10,
+                ticks: 0,
+                tile_id: (1, 1),
+            }) as Box<dyn Tile>,
+            tile_type,
+        ),
         _ => (
             Box::new(Conveyor {
                 position,
@@ -3183,6 +3643,7 @@ fn get_new_tile(
 
 fn move_camera(
     mut camera: Query<&mut Transform, With<Camera2d>>,
+    placer: Res<Placer>,
     keyboard_input: Res<ButtonInput<KeyCode>>,
     inventory_query: Query<(), With<Inventory>>,
 ) {
@@ -3201,7 +3662,8 @@ fn move_camera(
             direction.x = 1.0;
         }
         if let Ok(mut camera) = camera.single_mut() {
-            camera.translation += direction.normalize_or_zero().extend(0.0) * CAMERA_SPEED;
+            camera.translation +=
+                direction.normalize_or_zero().extend(0.0) * CAMERA_SPEED / placer.zoom_level;
         }
     }
 }
@@ -3222,8 +3684,12 @@ fn update_inventory_view(
             } else {
                 Color::srgb(0.2, 0.22, 0.25)
             };
-
-            commands.entity(entity).insert(BackgroundColor(color));
+            let bundle = commands.get_entity(entity);
+            if bundle.is_ok() {
+                bundle.unwrap().insert(BackgroundColor(color));
+            } else {
+                panic!("bacon!");
+            }
         }
 
         for entity in item_query.iter() {
@@ -3335,56 +3801,49 @@ fn handle_inventory_interaction(
                 for entity in context_menu_query.iter() {
                     commands.entity(entity).despawn();
                 }
-                println!("right");
 
-                commands
-                    .spawn((
+                commands.spawn((
+                    Node {
+                        width: Val::Px(150.0),
+                        height: Val::Auto,
+                        position_type: PositionType::Absolute,
+                        right: Val::Px(10.0),
+                        top: Val::Px(10.0),
+                        display: Display::Flex,
+                        flex_direction: FlexDirection::Column,
+                        padding: UiRect::all(Val::Px(5.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.2, 0.2, 0.2)),
+                    BorderRadius::all(Val::Px(5.0)),
+                    ContextMenu,
+                    ZIndex(100),
+                    children![(
                         Node {
-                            width: Val::Px(150.0),
-                            height: Val::Auto,
-                            position_type: PositionType::Absolute,
-                            right: Val::Px(10.0),
-                            top: Val::Px(10.0),
+                            width: Val::Percent(100.0),
+                            height: Val::Px(30.0),
                             display: Display::Flex,
-                            flex_direction: FlexDirection::Column,
-                            padding: UiRect::all(Val::Px(5.0)),
+                            align_items: AlignItems::Center,
+                            justify_content: JustifyContent::Center,
+                            margin: UiRect::bottom(Val::Px(5.0)),
                             ..default()
                         },
-                        BackgroundColor(Color::srgb(0.2, 0.2, 0.2)),
-                        BorderRadius::all(Val::Px(5.0)),
-                        ContextMenu,
-                        ZIndex(100),
-                    ))
-                    .with_children(|parent| {
-                        parent
-                            .spawn((
-                                Node {
-                                    width: Val::Percent(100.0),
-                                    height: Val::Px(30.0),
-                                    display: Display::Flex,
-                                    align_items: AlignItems::Center,
-                                    justify_content: JustifyContent::Center,
-                                    margin: UiRect::bottom(Val::Px(5.0)),
-                                    ..default()
-                                },
-                                BackgroundColor(Color::srgb(0.25, 0.25, 0.25)),
-                                BorderRadius::all(Val::Px(3.0)),
-                                HotkeyOption {
-                                    tile_type: item.tile_type,
-                                },
-                                Interaction::default(),
-                            ))
-                            .with_children(|button| {
-                                button.spawn((
-                                    Text::new("Assign Hotkey"),
-                                    TextFont {
-                                        font_size: 16.0,
-                                        ..Default::default()
-                                    },
-                                    TextColor(Color::WHITE),
-                                ));
-                            });
-                    });
+                        BackgroundColor(Color::srgb(0.25, 0.25, 0.25)),
+                        BorderRadius::all(Val::Px(3.0)),
+                        HotkeyOption {
+                            tile_type: item.tile_type,
+                        },
+                        Interaction::default(),
+                        children![(
+                            Text::new("Assign Hotkey"),
+                            TextFont {
+                                font_size: 16.0,
+                                ..Default::default()
+                            },
+                            TextColor(Color::WHITE),
+                        )]
+                    ),],
+                ));
 
                 break;
             }
@@ -3404,7 +3863,6 @@ fn handle_context_menu(
         if matches!(interaction, Interaction::Pressed) {
             if let Some(menu_entity) = context_menu_query.iter().next() {
                 commands.entity(menu_entity).despawn();
-                println!("bacon");
 
                 let new_menu = commands
                     .spawn((
@@ -3469,7 +3927,7 @@ fn handle_context_menu(
                                         justify_content: JustifyContent::Center,
                                         ..default()
                                     },
-                                    BackgroundColor(Color::srgb(0.3, 0.3, 0.3)),
+                                    //BackgroundColor(Color::srgb(0.3, 0.3, 0.3)),
                                     BorderRadius::all(Val::Px(3.0)),
                                     HotkeyButton {
                                         key: i,
@@ -3511,7 +3969,7 @@ fn handle_context_menu(
                                         justify_content: JustifyContent::Center,
                                         ..default()
                                     },
-                                    BackgroundColor(Color::srgb(0.3, 0.3, 0.3)),
+                                    //BackgroundColor(Color::srgb(0.3, 0.3, 0.3)),
                                     BorderRadius::all(Val::Px(3.0)),
                                     HotkeyButton {
                                         key: i,
@@ -3552,6 +4010,221 @@ fn handle_hotkey_assignment(
             for entity in context_menu_query.iter() {
                 commands.entity(entity).despawn();
             }
+        }
+    }
+}
+
+fn handle_core_context_menu(
+    mut commands: Commands,
+    category_query: Query<(&Interaction, &CoreCategory), Changed<Interaction>>,
+    interaction_tile_query: Query<(&Interaction, &TileTypeOption), Changed<Interaction>>,
+    mut bg_color_query: Query<(&mut BackgroundColor, &TileTypeOption)>,
+    mut core_menu_query: Query<(Entity, &mut CoreContextMenu)>,
+    tile_panel_query: Query<Entity, With<CoreItemsPanel>>,
+    tile_option_query: Query<Entity, With<TileTypeOption>>,
+    mut world: ResMut<WorldRes>,
+    close_button_query: Query<
+        (&Interaction, &Name),
+        (Changed<Interaction>, Without<TileTypeOption>),
+    >,
+    asset_server: Res<AssetServer>,
+) {
+    // Handle category changes
+    for (interaction, category) in category_query.iter() {
+        if matches!(interaction, Interaction::Pressed) {
+            if let Ok((_, mut core_menu)) = core_menu_query.single_mut() {
+                core_menu.selected_category = category.category;
+
+                // Refresh tile options
+                update_core_tiles(
+                    &mut commands,
+                    &world,
+                    core_menu.selected_category,
+                    &asset_server,
+                    &tile_panel_query,
+                    &tile_option_query,
+                );
+            }
+        }
+    }
+
+    // Handle tile type selection
+    for (interaction, tile_option) in interaction_tile_query.iter() {
+        if matches!(interaction, Interaction::Pressed) {
+            if let Ok((_, core_context)) = core_menu_query.single() {
+                if let Some((tile, _)) = world.tiles.get_mut(&core_context.position) {
+                    if let Some(core) = tile.as_any_mut().downcast_mut::<Core>() {
+                        // Set new tile type and reset ticks
+                        core.tile_id = tile_option.tile_type;
+                        core.interval = get_tile_core_interval(tile_option.tile_type);
+                        core.ticks = 0;
+
+                        // Update background colors
+                        for (mut bg_color, option) in bg_color_query.iter_mut() {
+                            *bg_color = if option.tile_type == tile_option.tile_type {
+                                BackgroundColor(Color::srgb(0.4, 0.6, 0.4))
+                            } else {
+                                BackgroundColor(Color::srgb(0.3, 0.3, 0.3))
+                            };
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Handle close button
+    for (interaction, name) in close_button_query.iter() {
+        if matches!(interaction, Interaction::Pressed) && name.as_str() == "close_button" {
+            if let Ok((entity, _)) = core_menu_query.single() {
+                commands.entity(entity).despawn_recursive();
+            }
+        }
+    }
+}
+
+fn update_core_menu_ui(
+    mut commands: Commands,
+    mut core_menu_query: Query<&CoreContextMenu>,
+    mut category_query: Query<(&CoreCategory, &mut BackgroundColor)>,
+) {
+    if let Ok(core_menu) = core_menu_query.single() {
+        // Update the category colors based on the selection
+        for (cat, mut bg_color) in category_query.iter_mut() {
+            *bg_color = if cat.category == core_menu.selected_category {
+                BackgroundColor(Color::srgb(0.3, 0.5, 0.7))
+            } else {
+                BackgroundColor(Color::srgb(0.2, 0.22, 0.25))
+            };
+        }
+    }
+}
+
+fn update_core_progress_text(
+    world: Res<WorldRes>,
+    core_menu_query: Query<&CoreContextMenu>,
+    mut text_query: Query<(&mut Text, &Name)>,
+) {
+    if let Ok(core_menu) = core_menu_query.single() {
+        if let Some((tile, _)) = world.tiles.get(&core_menu.position) {
+            if let Some(core) = tile.as_any().downcast_ref::<Core>() {
+                for (mut text, name) in text_query.iter_mut() {
+                    println!("main");
+                    if name.as_str() == "core_progress" {
+                        println!("a");
+                        text.0 = format!("Progress: {}/{} seconds", core.ticks, core.interval);
+                        println!("b");
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn update_core_tiles(
+    commands: &mut Commands,
+    world: &WorldRes,
+    category: u8,
+    asset_server: &AssetServer,
+    panel_query: &Query<Entity, With<CoreItemsPanel>>,
+    tile_query: &Query<Entity, With<TileTypeOption>>,
+) {
+    // Remove existing tile options
+    for entity in tile_query.iter() {
+        commands.entity(entity).despawn_recursive();
+    }
+
+    // If we can get the panel, populate it with new tiles
+    if let Ok(panel_entity) = panel_query.single() {
+        let tile_types = match category {
+            1 => vec![(1, 1), (1, 2), (1, 3)],         // Conveyors
+            2 => vec![(2, 1), (2, 2), (2, 3), (2, 4)], // Factories
+            3 => vec![(3, 1), (3, 2), (3, 3)],         // Extractors
+            4 => vec![(4, 1), (5, 1)],                 // Special
+            _ => vec![],
+        };
+
+        for tile_type in tile_types {
+            let count = *world.resources.get(&tile_type).unwrap_or(&0);
+            let interval = get_tile_core_interval(tile_type);
+
+            let tile_entity = commands
+                .spawn((
+                    Node {
+                        width: Val::Px(110.0),
+                        height: Val::Px(140.0),
+                        display: Display::Flex,
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
+                        padding: UiRect::all(Val::Px(5.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.3, 0.3, 0.3)),
+                    BorderRadius::all(Val::Px(5.0)),
+                    TileTypeOption { tile_type },
+                    Interaction::default(),
+                ))
+                .with_children(|parent| {
+                    // Tile image
+                    parent.spawn((
+                        Node {
+                            width: Val::Px(48.0),
+                            height: Val::Px(48.0),
+                            margin: UiRect::bottom(Val::Px(5.0)),
+                            ..default()
+                        },
+                        ImageNode::new(asset_server.load(get_tile_texture(tile_type))),
+                    ));
+
+                    // Tile name
+                    parent.spawn((
+                        Text::new(get_tile_name(tile_type)),
+                        TextFont {
+                            font_size: 12.0,
+                            ..Default::default()
+                        },
+                        TextColor(Color::WHITE),
+                        TextLayout {
+                            justify: JustifyText::Center,
+                            ..Default::default()
+                        },
+                    ));
+
+                    // Tile interval
+                    parent.spawn((
+                        Text::new(format!("Takes {} seconds", interval)),
+                        TextFont {
+                            font_size: 12.0,
+                            ..Default::default()
+                        },
+                        TextColor(Color::srgb(0.8, 0.8, 0.8)),
+                        TextLayout {
+                            justify: JustifyText::Center,
+                            ..Default::default()
+                        },
+                    ));
+
+                    // Available count
+                    parent.spawn((
+                        Text::new(format!("Available: {}", count)),
+                        TextFont {
+                            font_size: 12.0,
+                            ..Default::default()
+                        },
+                        TextColor(if count > 0 {
+                            Color::WHITE
+                        } else {
+                            Color::srgb(1.0, 0.5, 0.5)
+                        }),
+                        TextLayout {
+                            justify: JustifyText::Center,
+                            ..Default::default()
+                        },
+                    ));
+                })
+                .id();
+
+            commands.entity(panel_entity).add_child(tile_entity);
         }
     }
 }
