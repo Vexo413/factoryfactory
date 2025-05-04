@@ -1,6 +1,9 @@
 use std::{any::Any, collections::HashMap};
 
-use crate::{Action, Direction, Item, Position, StorageType, WorldRes};
+use bincode::{Decode, Encode};
+use serde::{Deserialize, Serialize};
+
+use crate::{Action, Direction, Item, Position, WorldRes};
 
 use super::{Conveyor, Tile};
 
@@ -45,5 +48,38 @@ impl Tile for Storage {
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encode, Decode)]
+pub enum StorageType {
+    SmallVault,
+    MediumVault,
+    LargeVault,
+}
+
+impl StorageType {
+    fn capacity(&self) -> HashMap<Item, u32> {
+        match self {
+            StorageType::SmallVault => {
+                let mut hashmap = HashMap::new();
+                hashmap.insert(Item::RawRigtorium, 5);
+                hashmap.insert(Item::RawFlextorium, 5);
+                hashmap
+            }
+            StorageType::MediumVault => {
+                let mut hashmap = HashMap::new();
+                hashmap.insert(Item::RawRigtorium, 10);
+                hashmap.insert(Item::RawFlextorium, 10);
+                hashmap
+            }
+
+            StorageType::LargeVault => {
+                let mut hashmap = HashMap::new();
+                hashmap.insert(Item::RawRigtorium, 20);
+                hashmap.insert(Item::RawFlextorium, 20);
+                hashmap
+            }
+        }
     }
 }

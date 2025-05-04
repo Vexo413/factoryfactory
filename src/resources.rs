@@ -9,6 +9,10 @@ use std::fs::File;
 use std::io::{self, Read, Write};
 use std::path::Path;
 
+use crate::extractor::ExtractorType;
+use crate::factory::FactoryType;
+use crate::router::RouterOutputIndex;
+use crate::storage::StorageType;
 use crate::tiles::Tile;
 use crate::{Conveyor, Extractor, Factory, Junction, Portal, Router, Storage, types::*};
 use crate::{Core, constants::*};

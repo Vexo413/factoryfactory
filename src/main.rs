@@ -77,35 +77,8 @@ fn main() {
 }
 
 // Setup function that initializes the game world
-fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut world: ResMut<WorldRes>) {
+fn setup(mut commands: Commands, asset_server: Res<AssetServer>, world: Res<WorldRes>) {
     commands.spawn(Camera2d);
-
-    if world.tiles.is_empty() {
-        world.tiles.insert(
-            Position::new(-3, -3),
-            (
-                Box::new(tiles::Extractor {
-                    position: Position::new(-3, -3),
-                    direction: Direction::Right,
-                    extractor_type: ExtractorType::RawRigtorium,
-                    item: None,
-                }),
-                (3, 1),
-            ),
-        );
-        world.tiles.insert(
-            Position::new(3, 3),
-            (
-                Box::new(tiles::Extractor {
-                    position: Position::new(3, 3),
-                    direction: Direction::Left,
-                    extractor_type: ExtractorType::RawFlextorium,
-                    item: None,
-                }),
-                (3, 2),
-            ),
-        );
-    }
 
     for (pos, _) in world.tiles.iter() {
         commands

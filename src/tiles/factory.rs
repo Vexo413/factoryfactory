@@ -1,6 +1,9 @@
 use std::{any::Any, collections::HashMap};
 
-use crate::{Action, Direction, FactoryType, Item, Position, WorldRes};
+use bincode::{Decode, Encode};
+use serde::{Deserialize, Serialize};
+
+use crate::{Action, Direction, Item, Position, WorldRes};
 
 use super::Tile;
 
@@ -79,5 +82,124 @@ impl Tile for Factory {
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
+    }
+}
+
+/// Types of factories for processing different resources
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encode, Decode)]
+pub enum FactoryType {
+    RigtoriumSmelter,
+    FlextoriumFabricator,
+    RigtoriumRodMolder,
+    ConveyorConstructor,
+    RouterConstructor,
+}
+
+impl FactoryType {
+    pub fn capacity(&self) -> HashMap<Item, u32> {
+        match self {
+            FactoryType::RigtoriumSmelter => {
+                let mut hashmap = HashMap::new();
+                hashmap.insert(Item::RawRigtorium, 2);
+                hashmap.insert(Item::Electrine, 2);
+                hashmap
+            }
+            FactoryType::FlextoriumFabricator => {
+                let mut hashmap = HashMap::new();
+                hashmap.insert(Item::RawFlextorium, 2);
+                hashmap.insert(Item::Electrine, 2);
+                hashmap
+            }
+            FactoryType::RigtoriumRodMolder => {
+                let mut hashmap = HashMap::new();
+                hashmap.insert(Item::Rigtorium, 4);
+                hashmap.insert(Item::Electrine, 2);
+                hashmap
+            }
+            FactoryType::ConveyorConstructor => {
+                let mut hashmap = HashMap::new();
+                hashmap.insert(Item::Flextorium, 8);
+                hashmap.insert(Item::RigtoriumRod, 4);
+                hashmap.insert(Item::Electrine, 2);
+                hashmap
+            }
+            FactoryType::RouterConstructor => {
+                let mut hashmap = HashMap::new();
+                hashmap.insert(Item::Flextorium, 4);
+                hashmap.insert(Item::Conveyor, 2);
+                hashmap
+            }
+        }
+    }
+
+    pub fn recipe(&self) -> crate::types::Recipe {
+        match self {
+            FactoryType::RigtoriumSmelter => {
+                let mut inputs = HashMap::new();
+                inputs.insert(Item::RawRigtorium, 1);
+                inputs.insert(Item::Electrine, 1);
+                crate::types::Recipe {
+                    inputs,
+                    output: Item::Rigtorium,
+                }
+            }
+            FactoryType::FlextoriumFabricator => {
+                let mut inputs = HashMap::new();
+                inputs.insert(Item::RawFlextorium, 1);
+                inputs.insert(Item::Electrine, 1);
+                crate::types::Recipe {
+                    inputs,
+                    output: Item::Flextorium,
+                }
+            }
+            FactoryType::RigtoriumRodMolder => {
+                let mut inputs = HashMap::new();
+                inputs.insert(Item::Rigtorium, 2);
+                inputs.insert(Item::Electrine, 1);
+                crate::types::Recipe {
+                    inputs,
+                    output: Item::RigtoriumRod,
+                }
+            }
+            FactoryType::ConveyorConstructor => {
+                let mut inputs = HashMap::new();
+                inputs.insert(Item::Flextorium, 4);
+                inputs.insert(Item::RigtoriumRod, 2);
+                inputs.insert(Item::Electrine, 1);
+                crate::types::Recipe {
+                    inputs,
+                    output: Item::Conveyor,
+                }
+            }
+            FactoryType::RouterConstructor => {
+                let mut inputs = HashMap::new();
+                inputs.insert(Item::Flextorium, 2);
+                inputs.insert(Item::Conveyor, 1);
+                crate::types::Recipe {
+                    inputs,
+                    output: Item::Router,
+                }
+            }
+        }
+    }
+
+    pub fn sprite(&self) -> &'static str {
+        match self {
+            FactoryType::RigtoriumSmelter => {
+                "embedded://textures/tiles/factories/rigtorium_smelter.png"
+            }
+            FactoryType::FlextoriumFabricator => {
+                "embedded://textures/tiles/factories/flextorium_fabricator.png"
+            }
+            FactoryType::RigtoriumRodMolder => {
+                "embedded://textures/tiles/factories/rigtorium_rod_molder.png"
+            }
+            FactoryType::ConveyorConstructor => {
+                "embedded://textures/tiles/factories/conveyor_constructor.png"
+            }
+            FactoryType::RouterConstructor => {
+                "embedded://textures/tiles/factories/router_constructor.png"
+            }
+        }
     }
 }

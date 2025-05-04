@@ -1,9 +1,8 @@
-use bevy::prelude::*;
 use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::{rotate_direction_clockwise, rotate_direction_counterclockwise};
+use crate::router::RouterOutputIndex;
 
 /// Position in the grid world
 #[derive(
@@ -81,6 +80,7 @@ pub enum Item {
     Electrine,
     RigtoriumRod,
     Conveyor,
+    Router,
 }
 
 impl Item {
@@ -93,12 +93,14 @@ impl Item {
             Item::Electrine => "embedded://textures/items/electrine.png",
             Item::RigtoriumRod => "embedded://textures/items/rigtorium_rod.png",
             Item::Conveyor => "embedded://textures/items/conveyor.png",
+            Item::Router => "embedded://textures/items/router.png",
         }
     }
 
     pub fn to_tile(&self) -> Option<(u8, u8)> {
         match self {
             Item::Conveyor => Some((1, 1)),
+            Item::Router => Some((1, 2)),
             _ => None,
         }
     }
@@ -128,204 +130,4 @@ pub enum TerrainTileType {
     RawRigtoriumDeposit,
     ElectrineDeposit,
     Stone,
-}
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encode, Decode)]
-pub enum ExtractorType {
-    RawFlextorium,
-    RawRigtorium,
-    Electrine,
-}
-
-impl ExtractorType {
-    pub fn interval(&self) -> i32 {
-        match self {
-            ExtractorType::RawRigtorium => 5,
-            ExtractorType::RawFlextorium => 5,
-            ExtractorType::Electrine => 2,
-        }
-    }
-
-    pub fn terrain(&self) -> crate::types::TerrainTileType {
-        match self {
-            ExtractorType::RawRigtorium => crate::types::TerrainTileType::RawRigtoriumDeposit,
-            ExtractorType::RawFlextorium => crate::types::TerrainTileType::RawFlextoriumDeposit,
-            ExtractorType::Electrine => crate::types::TerrainTileType::ElectrineDeposit,
-        }
-    }
-
-    pub fn spawn_item(&self) -> Item {
-        match self {
-            ExtractorType::RawRigtorium => Item::RawRigtorium,
-            ExtractorType::RawFlextorium => Item::RawFlextorium,
-            ExtractorType::Electrine => Item::Electrine,
-        }
-    }
-
-    pub fn sprite(&self) -> String {
-        match self {
-            ExtractorType::RawRigtorium => "embedded://textures/tiles/extractors/raw_rigtorium.png",
-            ExtractorType::RawFlextorium => {
-                "embedded://textures/tiles/extractors/raw_flextorium.png"
-            }
-            ExtractorType::Electrine => "embedded://textures/tiles/extractors/electrine.png",
-        }
-        .to_string()
-    }
-}
-
-/// Types of factories for processing different resources
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encode, Decode)]
-pub enum FactoryType {
-    RigtoriumSmelter,
-    FlextoriumFabricator,
-    RigtoriumRodMolder,
-    ConveyorConstructor,
-}
-
-impl FactoryType {
-    pub fn capacity(&self) -> HashMap<Item, u32> {
-        match self {
-            FactoryType::RigtoriumSmelter => {
-                let mut hashmap = HashMap::new();
-                hashmap.insert(Item::RawRigtorium, 2);
-                hashmap.insert(Item::Electrine, 2);
-                hashmap
-            }
-            FactoryType::FlextoriumFabricator => {
-                let mut hashmap = HashMap::new();
-                hashmap.insert(Item::RawFlextorium, 2);
-                hashmap.insert(Item::Electrine, 2);
-                hashmap
-            }
-            FactoryType::RigtoriumRodMolder => {
-                let mut hashmap = HashMap::new();
-                hashmap.insert(Item::Rigtorium, 4);
-                hashmap.insert(Item::Electrine, 2);
-                hashmap
-            }
-            FactoryType::ConveyorConstructor => {
-                let mut hashmap = HashMap::new();
-                hashmap.insert(Item::Flextorium, 8);
-                hashmap.insert(Item::RigtoriumRod, 4);
-                hashmap.insert(Item::Electrine, 2);
-                hashmap
-            }
-        }
-    }
-
-    pub fn recipe(&self) -> crate::types::Recipe {
-        match self {
-            FactoryType::RigtoriumSmelter => {
-                let mut inputs = HashMap::new();
-                inputs.insert(Item::RawRigtorium, 1);
-                inputs.insert(Item::Electrine, 1);
-                crate::types::Recipe {
-                    inputs,
-                    output: Item::Rigtorium,
-                }
-            }
-            FactoryType::FlextoriumFabricator => {
-                let mut inputs = HashMap::new();
-                inputs.insert(Item::RawFlextorium, 1);
-                inputs.insert(Item::Electrine, 1);
-                crate::types::Recipe {
-                    inputs,
-                    output: Item::Flextorium,
-                }
-            }
-            FactoryType::RigtoriumRodMolder => {
-                let mut inputs = HashMap::new();
-                inputs.insert(Item::Rigtorium, 2);
-                inputs.insert(Item::Electrine, 1);
-                crate::types::Recipe {
-                    inputs,
-                    output: Item::RigtoriumRod,
-                }
-            }
-            FactoryType::ConveyorConstructor => {
-                let mut inputs = HashMap::new();
-                inputs.insert(Item::Flextorium, 4);
-                inputs.insert(Item::RigtoriumRod, 2);
-                inputs.insert(Item::Electrine, 1);
-                crate::types::Recipe {
-                    inputs,
-                    output: Item::Conveyor,
-                }
-            }
-        }
-    }
-
-    pub fn sprite(&self) -> &'static str {
-        match self {
-            FactoryType::RigtoriumSmelter => {
-                "embedded://textures/tiles/factories/rigtorium_smelter.png"
-            }
-            FactoryType::FlextoriumFabricator => {
-                "embedded://textures/tiles/factories/flextorium_fabricator.png"
-            }
-            FactoryType::RigtoriumRodMolder => {
-                "embedded://textures/tiles/factories/rigtorium_rod_molder.png"
-            }
-            FactoryType::ConveyorConstructor => {
-                "embedded://textures/tiles/factories/conveyor_constructor.png"
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encode, Decode)]
-pub enum RouterOutputIndex {
-    Forward = 0,
-    Right = 1,
-    Left = 2,
-}
-impl RouterOutputIndex {
-    pub fn next(&self) -> Self {
-        match self {
-            RouterOutputIndex::Forward => RouterOutputIndex::Right,
-            RouterOutputIndex::Right => RouterOutputIndex::Left,
-            RouterOutputIndex::Left => RouterOutputIndex::Forward,
-        }
-    }
-
-    pub fn to_direction(&self, base_direction: Direction) -> Direction {
-        match self {
-            RouterOutputIndex::Forward => base_direction,
-            RouterOutputIndex::Right => rotate_direction_clockwise(base_direction),
-            RouterOutputIndex::Left => rotate_direction_counterclockwise(base_direction),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encode, Decode)]
-pub enum StorageType {
-    SmallVault,
-    MediumVault,
-    LargeVault,
-}
-
-impl StorageType {
-    fn capacity(&self) -> HashMap<Item, u32> {
-        match self {
-            StorageType::SmallVault => {
-                let mut hashmap = HashMap::new();
-                hashmap.insert(Item::RawRigtorium, 5);
-                hashmap.insert(Item::RawFlextorium, 5);
-                hashmap
-            }
-            StorageType::MediumVault => {
-                let mut hashmap = HashMap::new();
-                hashmap.insert(Item::RawRigtorium, 10);
-                hashmap.insert(Item::RawFlextorium, 10);
-                hashmap
-            }
-
-            StorageType::LargeVault => {
-                let mut hashmap = HashMap::new();
-                hashmap.insert(Item::RawRigtorium, 20);
-                hashmap.insert(Item::RawFlextorium, 20);
-                hashmap
-            }
-        }
-    }
 }

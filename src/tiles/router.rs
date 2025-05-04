@@ -1,6 +1,12 @@
 use std::any::Any;
 
-use crate::{Action, Direction, Item, Position, RouterOutputIndex, WorldRes};
+use bincode::{Decode, Encode};
+use serde::{Deserialize, Serialize};
+
+use crate::{
+    Action, Direction, Item, Position, WorldRes, rotate_direction_clockwise,
+    rotate_direction_counterclockwise,
+};
 
 use super::{Conveyor, Factory, Tile};
 
@@ -71,5 +77,29 @@ impl Tile for Router {
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encode, Decode)]
+pub enum RouterOutputIndex {
+    Forward = 0,
+    Right = 1,
+    Left = 2,
+}
+impl RouterOutputIndex {
+    pub fn next(&self) -> Self {
+        match self {
+            RouterOutputIndex::Forward => RouterOutputIndex::Right,
+            RouterOutputIndex::Right => RouterOutputIndex::Left,
+            RouterOutputIndex::Left => RouterOutputIndex::Forward,
+        }
+    }
+
+    pub fn to_direction(&self, base_direction: Direction) -> Direction {
+        match self {
+            RouterOutputIndex::Forward => base_direction,
+            RouterOutputIndex::Right => rotate_direction_clockwise(base_direction),
+            RouterOutputIndex::Left => rotate_direction_counterclockwise(base_direction),
+        }
     }
 }

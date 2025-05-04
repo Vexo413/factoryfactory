@@ -159,10 +159,10 @@ fn update_core_tiles(
     // If we can get the panel, populate it with new tiles
     if let Ok(panel_entity) = panel_query.single() {
         let tile_types = match category {
-            1 => vec![(1, 1), (1, 2), (1, 3)],         // Conveyors
-            2 => vec![(2, 1), (2, 2), (2, 3), (2, 4)], // Factories
-            3 => vec![(3, 1), (3, 2), (3, 3)],         // Extractors
-            4 => vec![(4, 1), (5, 1)],                 // Special
+            1 => vec![(1, 1), (1, 2), (1, 3)],                 // Conveyors
+            2 => vec![(2, 1), (2, 2), (2, 3), (2, 4), (2, 5)], // Factories
+            3 => vec![(3, 1), (3, 2), (3, 3)],                 // Extractors
+            4 => vec![(4, 1), (5, 1)],                         // Special
             _ => vec![],
         };
 

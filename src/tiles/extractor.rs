@@ -1,6 +1,9 @@
 use std::any::Any;
 
-use crate::{Action, Direction, ExtractorType, Item, Position, WorldRes};
+use bincode::{Decode, Encode};
+use serde::{Deserialize, Serialize};
+
+use crate::{Action, Direction, Item, Position, WorldRes};
 
 use super::Tile;
 
@@ -52,5 +55,49 @@ impl Tile for Extractor {
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encode, Decode)]
+pub enum ExtractorType {
+    RawFlextorium,
+    RawRigtorium,
+    Electrine,
+}
+
+impl ExtractorType {
+    pub fn interval(&self) -> i32 {
+        match self {
+            ExtractorType::RawRigtorium => 5,
+            ExtractorType::RawFlextorium => 5,
+            ExtractorType::Electrine => 2,
+        }
+    }
+
+    pub fn terrain(&self) -> crate::types::TerrainTileType {
+        match self {
+            ExtractorType::RawRigtorium => crate::types::TerrainTileType::RawRigtoriumDeposit,
+            ExtractorType::RawFlextorium => crate::types::TerrainTileType::RawFlextoriumDeposit,
+            ExtractorType::Electrine => crate::types::TerrainTileType::ElectrineDeposit,
+        }
+    }
+
+    pub fn spawn_item(&self) -> Item {
+        match self {
+            ExtractorType::RawRigtorium => Item::RawRigtorium,
+            ExtractorType::RawFlextorium => Item::RawFlextorium,
+            ExtractorType::Electrine => Item::Electrine,
+        }
+    }
+
+    pub fn sprite(&self) -> String {
+        match self {
+            ExtractorType::RawRigtorium => "embedded://textures/tiles/extractors/raw_rigtorium.png",
+            ExtractorType::RawFlextorium => {
+                "embedded://textures/tiles/extractors/raw_flextorium.png"
+            }
+            ExtractorType::Electrine => "embedded://textures/tiles/extractors/electrine.png",
+        }
+        .to_string()
     }
 }
