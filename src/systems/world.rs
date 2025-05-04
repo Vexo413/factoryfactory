@@ -5,9 +5,9 @@ use std::collections::HashSet;
 
 use crate::{
     Action, CHUNK_SIZE, ChunkPosition, Direction, ELECTRINE_DENSITY, ELECTRINE_NOISE_SCALE,
-    FLEXTORIUM_DENSITY, FLEXTORIUM_NOISE_SCALE, IMAGE_SIZE, ITEM_SIZE, ItemAnimation, Placer,
-    Position, RIGTORIUM_DENSITY, RIGTORIUM_NOISE_SCALE, TERRAIN_BASE_THRESHOLD, TICK_LENGTH,
-    TILE_SIZE, TerrainChunk, TerrainTileType, WorldRes,
+    FLEXTORIUM_DENSITY, FLEXTORIUM_NOISE_SCALE, IMAGE_SIZE, Placer, Position, RIGTORIUM_DENSITY,
+    RIGTORIUM_NOISE_SCALE, TERRAIN_BASE_THRESHOLD, TILE_SIZE, TerrainChunk, TerrainTileType,
+    WorldRes,
 };
 
 pub fn manage_terrain_chunks(
@@ -155,13 +155,7 @@ fn generate_chunk(
     });
 }
 
-pub fn tick_tiles(
-    time: Res<Time>,
-    mut commands: Commands,
-    mut world: ResMut<WorldRes>,
-    hotkeys: Res<Hotkeys>,
-    asset_server: Res<AssetServer>,
-) {
+pub fn tick_tiles(time: Res<Time>, mut world: ResMut<WorldRes>, hotkeys: Res<Hotkeys>) {
     world.tick_timer.tick(time.delta());
     if world.tick_timer.finished() {
         world.tick_count += 1;
@@ -196,6 +190,10 @@ pub fn tick_tiles(
                                             } else if start.y != end.y {
                                                 start_junction.vertical_item = None;
                                             }
+                                        } else if let Some(start_storage) =
+                                            start_tile.0.as_any_mut().downcast_mut::<Storage>()
+                                        {
+                                            start_storage.inventory -= 1;
                                         }
                                     }
                                 }
@@ -221,6 +219,10 @@ pub fn tick_tiles(
                                                 } else if start.y != end.y {
                                                     start_junction.vertical_item = None;
                                                 }
+                                            } else if let Some(start_storage) =
+                                                tile.0.as_any_mut().downcast_mut::<Storage>()
+                                            {
+                                                start_storage.inventory -= 1;
                                             }
                                         }
                                     }
@@ -242,7 +244,33 @@ pub fn tick_tiles(
                                                 } else if start.y != end.y {
                                                     start_junction.vertical_item = None;
                                                 }
+                                            } else if let Some(start_storage) =
+                                                tile.0.as_any_mut().downcast_mut::<Storage>()
+                                            {
+                                                start_storage.inventory -= 1;
                                             }
+                                        }
+                                    }
+                                }
+                            } else if let Some(end_storage) =
+                                tile.0.as_any_mut().downcast_mut::<Storage>()
+                            {
+                                if end_storage.storage_type.capacity() > end_storage.inventory {
+                                    end_storage.inventory += 1;
+                                    if let Some(start_tile) = world.tiles.get_mut(&start) {
+                                        start_tile.0.set_item(None);
+                                        if let Some(start_junction) =
+                                            start_tile.0.as_any_mut().downcast_mut::<Junction>()
+                                        {
+                                            if start.x != end.x {
+                                                start_junction.horizontal_item = None;
+                                            } else if start.y != end.y {
+                                                start_junction.vertical_item = None;
+                                            }
+                                        } else if let Some(start_storage) =
+                                            start_tile.0.as_any_mut().downcast_mut::<Storage>()
+                                        {
+                                            start_storage.inventory -= 1;
                                         }
                                     }
                                 }
@@ -261,6 +289,10 @@ pub fn tick_tiles(
                                 } else if start.y != end.y {
                                     start_junction.vertical_item = None;
                                 }
+                            } else if let Some(start_storage) =
+                                start_tile.0.as_any_mut().downcast_mut::<Storage>()
+                            {
+                                start_storage.inventory -= 1;
                             }
                         }
                     }
@@ -322,46 +354,6 @@ pub fn tick_tiles(
                     }
                 }
                 Action::Produce(position) => {
-                    /*let item_info: Option<(Item, Position)> = {
-                        if let Some(tile) = world.tiles.get(&position) {
-                            if let Some(factory) = tile.0.as_any().downcast_ref::<Factory>() {
-                                if factory.can_produce() {
-                                    let recipe = factory.factory_type.recipe();
-                                    let mut end_position = position;
-                                    match factory.direction {
-                                        Direction::Up => end_position.y += 1,
-                                        Direction::Down => end_position.y -= 1,
-                                        Direction::Left => end_position.x -= 1,
-                                        Direction::Right => end_position.x += 1,
-                                    }
-                                    Some((recipe.output, end_position))
-                                } else {
-                                    None
-                                }
-                            } else if let Some(extractor) =
-                                tile.0.as_any().downcast_ref::<Extractor>()
-                            {
-                                if extractor.item.is_none() {
-                                    let item = extractor.extractor_type.spawn_item();
-                                    let mut end_position = position;
-                                    match extractor.direction {
-                                        Direction::Up => end_position.y += 1,
-                                        Direction::Down => end_position.y -= 1,
-                                        Direction::Left => end_position.x -= 1,
-                                        Direction::Right => end_position.x += 1,
-                                    }
-                                    Some((item, end_position))
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    };*/
-
                     let new_item = if let Some(tile) = world.tiles.get_mut(&position) {
                         if let Some(factory) = tile.0.as_any_mut().downcast_mut::<Factory>() {
                             Some(factory.factory_type.recipe().output)
@@ -478,6 +470,12 @@ pub fn tick_tiles(
                                                         } else if position.y != dest_pos.y {
                                                             start_junction.vertical_item = None;
                                                         }
+                                                    } else if let Some(start_storage) = tile
+                                                        .0
+                                                        .as_any_mut()
+                                                        .downcast_mut::<Storage>()
+                                                    {
+                                                        start_storage.inventory -= 1;
                                                     }
                                                 }
                                             }
@@ -540,399 +538,6 @@ pub fn tick_tiles(
         world.actions = sort_moves_topologically(next, &world);
         world.actions.reverse();
 
-        let mut filled_positions: HashSet<Position> = HashSet::new();
-        let mut empty_positions: HashSet<Position> = HashSet::new();
-
-        for (pos, tile) in world.tiles.iter() {
-            if let Some(conveyor) = tile.0.as_any().downcast_ref::<Conveyor>() {
-                if conveyor.item.is_none() {
-                    empty_positions.insert(*pos);
-                }
-            } else if tile.0.as_any().is::<Factory>() {
-                empty_positions.insert(*pos);
-            } else if let Some(router) = tile.0.as_any().downcast_ref::<Router>() {
-                if router.item.is_none() {
-                    empty_positions.insert(*pos);
-                }
-            }
-        }
-
-        for action in &world.actions {
-            match action {
-                Action::Move(start, end, item) => {
-                    if let Some(tile) = world.tiles.get(end) {
-                        if tile.0.as_any().is::<Conveyor>() {
-                            if !filled_positions.contains(end) && empty_positions.contains(end) {
-                                filled_positions.insert(*end);
-                                empty_positions.remove(end);
-
-                                filled_positions.remove(start);
-                                empty_positions.insert(*start);
-
-                                let start_pos = Vec3::new(
-                                    start.x as f32 * TILE_SIZE,
-                                    start.y as f32 * TILE_SIZE,
-                                    1.0,
-                                );
-                                let end_pos = Vec3::new(
-                                    end.x as f32 * TILE_SIZE,
-                                    end.y as f32 * TILE_SIZE,
-                                    1.0,
-                                );
-                                commands.spawn((
-                                    ItemAnimation {
-                                        start_pos,
-                                        end_pos,
-                                        timer: Timer::from_seconds(TICK_LENGTH, TimerMode::Once),
-                                    },
-                                    Sprite::from_image(asset_server.load(item.sprite())),
-                                    Transform {
-                                        translation: start_pos,
-                                        scale: Vec3::splat(ITEM_SIZE / IMAGE_SIZE),
-                                        ..Default::default()
-                                    },
-                                ));
-                            }
-                        } else if tile.0.as_any().is::<Router>() {
-                            if !filled_positions.contains(end) && empty_positions.contains(end) {
-                                filled_positions.insert(*end);
-                                empty_positions.remove(end);
-
-                                filled_positions.remove(start);
-                                empty_positions.insert(*start);
-
-                                let start_pos = Vec3::new(
-                                    start.x as f32 * TILE_SIZE,
-                                    start.y as f32 * TILE_SIZE,
-                                    1.0,
-                                );
-                                let end_pos = Vec3::new(
-                                    end.x as f32 * TILE_SIZE,
-                                    end.y as f32 * TILE_SIZE,
-                                    1.0,
-                                );
-                                commands.spawn((
-                                    ItemAnimation {
-                                        start_pos,
-                                        end_pos,
-                                        timer: Timer::from_seconds(TICK_LENGTH, TimerMode::Once),
-                                    },
-                                    Sprite::from_image(asset_server.load(item.sprite())),
-                                    Transform {
-                                        translation: start_pos,
-                                        scale: Vec3::splat(ITEM_SIZE / IMAGE_SIZE),
-                                        ..Default::default()
-                                    },
-                                ));
-                            }
-                        } else if let Some(factory) = tile.0.as_any().downcast_ref::<Factory>() {
-                            if factory.factory_type.capacity().get(item).unwrap_or(&0_u32)
-                                > factory.inventory.get(item).unwrap_or(&0_u32)
-                            {
-                                filled_positions.remove(start);
-                                empty_positions.insert(*start);
-
-                                let start_pos = Vec3::new(
-                                    start.x as f32 * TILE_SIZE,
-                                    start.y as f32 * TILE_SIZE,
-                                    1.0,
-                                );
-                                let end_pos = Vec3::new(
-                                    end.x as f32 * TILE_SIZE,
-                                    end.y as f32 * TILE_SIZE,
-                                    1.0,
-                                );
-                                commands.spawn((
-                                    ItemAnimation {
-                                        start_pos,
-                                        end_pos,
-                                        timer: Timer::from_seconds(TICK_LENGTH, TimerMode::Once),
-                                    },
-                                    Sprite::from_image(asset_server.load(item.sprite())),
-                                    Transform {
-                                        translation: start_pos,
-                                        scale: Vec3::splat(ITEM_SIZE / IMAGE_SIZE),
-                                        ..Default::default()
-                                    },
-                                ));
-                            }
-                        } else if let Some(end_portal) = tile.0.as_any().downcast_ref::<Portal>() {
-                            if end_portal.item.is_none() {
-                                filled_positions.insert(*end);
-                                empty_positions.remove(end);
-
-                                filled_positions.remove(start);
-                                empty_positions.insert(*start);
-
-                                let start_pos = Vec3::new(
-                                    start.x as f32 * TILE_SIZE,
-                                    start.y as f32 * TILE_SIZE,
-                                    1.0,
-                                );
-                                let end_pos = Vec3::new(
-                                    end.x as f32 * TILE_SIZE,
-                                    end.y as f32 * TILE_SIZE,
-                                    1.0,
-                                );
-                                commands.spawn((
-                                    ItemAnimation {
-                                        start_pos,
-                                        end_pos,
-                                        timer: Timer::from_seconds(TICK_LENGTH, TimerMode::Once),
-                                    },
-                                    Sprite::from_image(asset_server.load(item.sprite())),
-                                    Transform {
-                                        translation: start_pos,
-                                        scale: Vec3::splat(ITEM_SIZE / IMAGE_SIZE),
-                                        ..Default::default()
-                                    },
-                                ));
-                            }
-                        } else if let Some(junction) = tile.0.as_any().downcast_ref::<Junction>() {
-                            let is_horizontal_movement = start.y == end.y;
-                            let can_accept = if is_horizontal_movement {
-                                junction.horizontal_item.is_none()
-                            } else {
-                                junction.vertical_item.is_none()
-                            };
-
-                            if can_accept {
-                                filled_positions.insert(*end);
-
-                                if is_horizontal_movement {
-                                    filled_positions.remove(start);
-                                } else {
-                                    filled_positions.remove(start);
-                                }
-
-                                let start_pos = Vec3::new(
-                                    start.x as f32 * TILE_SIZE,
-                                    start.y as f32 * TILE_SIZE,
-                                    1.0,
-                                );
-                                let end_pos = Vec3::new(
-                                    end.x as f32 * TILE_SIZE,
-                                    end.y as f32 * TILE_SIZE,
-                                    1.0,
-                                );
-                                commands.spawn((
-                                    ItemAnimation {
-                                        start_pos,
-                                        end_pos,
-                                        timer: Timer::from_seconds(TICK_LENGTH, TimerMode::Once),
-                                    },
-                                    Sprite::from_image(asset_server.load(item.sprite())),
-                                    Transform {
-                                        translation: start_pos,
-                                        scale: Vec3::splat(ITEM_SIZE / IMAGE_SIZE),
-                                        ..Default::default()
-                                    },
-                                ));
-                            }
-                        }
-                    }
-                }
-                Action::MoveRouter(start, end, item, _last_output) => {
-                    if let Some(tile) = world.tiles.get(end) {
-                        let can_accept = if tile.0.as_any().is::<Conveyor>() {
-                            !filled_positions.contains(end) && empty_positions.contains(end)
-                        } else if tile.0.as_any().is::<Router>() {
-                            !filled_positions.contains(end) && empty_positions.contains(end)
-                        } else if let Some(factory) = tile.0.as_any().downcast_ref::<Factory>() {
-                            factory.factory_type.capacity().get(item).unwrap_or(&0_u32)
-                                > factory.inventory.get(item).unwrap_or(&0_u32)
-                        } else if let Some(end_portal) = tile.0.as_any().downcast_ref::<Portal>() {
-                            end_portal.item.is_none()
-                        } else {
-                            false
-                        };
-
-                        if can_accept {
-                            filled_positions.insert(*end);
-                            empty_positions.remove(end);
-
-                            filled_positions.remove(start);
-                            empty_positions.insert(*start);
-                            let start_pos = Vec3::new(
-                                start.x as f32 * TILE_SIZE,
-                                start.y as f32 * TILE_SIZE,
-                                1.0,
-                            );
-                            let end_pos =
-                                Vec3::new(end.x as f32 * TILE_SIZE, end.y as f32 * TILE_SIZE, 1.0);
-                            commands.spawn((
-                                ItemAnimation {
-                                    start_pos,
-                                    end_pos,
-                                    timer: Timer::from_seconds(TICK_LENGTH, TimerMode::Once),
-                                },
-                                Sprite::from_image(asset_server.load(item.sprite())),
-                                Transform {
-                                    translation: start_pos,
-                                    scale: Vec3::splat(ITEM_SIZE / IMAGE_SIZE),
-                                    ..Default::default()
-                                },
-                            ));
-                        }
-                    }
-                }
-                Action::Produce(position) => {
-                    let can_produce_and_move = {
-                        if let Some(tile) = world.tiles.get(position) {
-                            if let Some(factory) = tile.0.as_any().downcast_ref::<Factory>() {
-                                if factory.can_produce()
-                                    && factory.item.is_none()
-                                    && factory.ticks >= factory.interval
-                                {
-                                    let mut dest_pos = *position;
-                                    match factory.direction {
-                                        Direction::Up => dest_pos.y += 1,
-                                        Direction::Down => dest_pos.y -= 1,
-                                        Direction::Left => dest_pos.x -= 1,
-                                        Direction::Right => dest_pos.x += 1,
-                                    }
-
-                                    if let Some(dest_tile) = world.tiles.get(&dest_pos) {
-                                        let output_item = factory.factory_type.recipe().output;
-                                        let can_accept = if dest_tile.0.as_any().is::<Conveyor>() {
-                                            empty_positions.contains(&dest_pos)
-                                                && !filled_positions.contains(&dest_pos)
-                                        } else if dest_tile.0.as_any().is::<Router>() {
-                                            empty_positions.contains(&dest_pos)
-                                                && !filled_positions.contains(&dest_pos)
-                                        } else if let Some(dest_factory) =
-                                            dest_tile.0.as_any().downcast_ref::<Factory>()
-                                        {
-                                            dest_factory
-                                                .factory_type
-                                                .capacity()
-                                                .get(&output_item)
-                                                .unwrap_or(&0)
-                                                > dest_factory
-                                                    .inventory
-                                                    .get(&output_item)
-                                                    .unwrap_or(&0)
-                                        } else if let Some(portal) =
-                                            dest_tile.0.as_any().downcast_ref::<Portal>()
-                                        {
-                                            portal.item.is_none()
-                                        } else {
-                                            false
-                                        };
-
-                                        if can_accept {
-                                            Some((
-                                                factory.factory_type.recipe().output,
-                                                *position,
-                                                dest_pos,
-                                            ))
-                                        } else {
-                                            None
-                                        }
-                                    } else {
-                                        None
-                                    }
-                                } else {
-                                    None
-                                }
-                            } else if let Some(extractor) =
-                                tile.0.as_any().downcast_ref::<Extractor>()
-                            {
-                                if extractor.item.is_none()
-                                    && world.tick_count % extractor.extractor_type.interval() == 0
-                                    && world.terrain.get(position)
-                                        == Some(&extractor.extractor_type.terrain())
-                                {
-                                    let mut dest_pos = *position;
-                                    match extractor.direction {
-                                        Direction::Up => dest_pos.y += 1,
-                                        Direction::Down => dest_pos.y -= 1,
-                                        Direction::Left => dest_pos.x -= 1,
-                                        Direction::Right => dest_pos.x += 1,
-                                    }
-
-                                    if let Some(dest_tile) = world.tiles.get(&dest_pos) {
-                                        let output_item = extractor.extractor_type.spawn_item();
-                                        let can_accept = if dest_tile.0.as_any().is::<Conveyor>() {
-                                            empty_positions.contains(&dest_pos)
-                                                && !filled_positions.contains(&dest_pos)
-                                        } else if dest_tile.0.as_any().is::<Router>() {
-                                            empty_positions.contains(&dest_pos)
-                                                && !filled_positions.contains(&dest_pos)
-                                        } else if let Some(factory) =
-                                            dest_tile.0.as_any().downcast_ref::<Factory>()
-                                        {
-                                            factory
-                                                .factory_type
-                                                .capacity()
-                                                .get(&output_item)
-                                                .unwrap_or(&0)
-                                                > factory.inventory.get(&output_item).unwrap_or(&0)
-                                        } else if let Some(portal) =
-                                            dest_tile.0.as_any().downcast_ref::<Portal>()
-                                        {
-                                            portal.item.is_none()
-                                        } else {
-                                            false
-                                        };
-
-                                        if can_accept {
-                                            Some((
-                                                extractor.extractor_type.spawn_item(),
-                                                *position,
-                                                dest_pos,
-                                            ))
-                                        } else {
-                                            None
-                                        }
-                                    } else {
-                                        None
-                                    }
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    };
-
-                    if let Some((item, source_pos, dest_pos)) = can_produce_and_move {
-                        filled_positions.insert(dest_pos);
-                        empty_positions.remove(&dest_pos);
-
-                        let start_pos = Vec3::new(
-                            source_pos.x as f32 * TILE_SIZE,
-                            source_pos.y as f32 * TILE_SIZE,
-                            1.0,
-                        );
-                        let end_pos = Vec3::new(
-                            dest_pos.x as f32 * TILE_SIZE,
-                            dest_pos.y as f32 * TILE_SIZE,
-                            1.0,
-                        );
-
-                        commands.spawn((
-                            ItemAnimation {
-                                start_pos,
-                                end_pos,
-                                timer: Timer::from_seconds(TICK_LENGTH, TimerMode::Once),
-                            },
-                            Sprite::from_image(asset_server.load(item.sprite())),
-                            Transform {
-                                translation: start_pos,
-                                scale: Vec3::splat(ITEM_SIZE / IMAGE_SIZE),
-                                ..Default::default()
-                            },
-                        ));
-                    }
-                }
-
-                _ => {}
-            }
-        }
         if let Err(err) = world.save("savegame.ffs", &hotkeys) {
             eprintln!("Error saving game: {}", err);
         }

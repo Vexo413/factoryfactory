@@ -253,7 +253,6 @@ pub fn manage_tiles(
                         if core_context_query.is_empty() {
                             if let Some(tile) = world.tiles.get(&pos) {
                                 if let Some(core) = tile.0.as_any().downcast_ref::<Core>() {
-                                    // Show Core context menu when clicking on a Core tile
                                     commands.spawn((
                                         Node {
                                             width: Val::Vw(80.0),
@@ -340,7 +339,6 @@ pub fn manage_tiles(
                                                     ..Default::default()
                                                 },
                                                 children![
-                                                    // Categories panel
                                                     (
                                                         Node {
                                                             width: Val::Percent(25.0),
@@ -373,7 +371,7 @@ pub fn manage_tiles(
                                                                 Interaction::default(),
                                                                 BorderRadius::all(Val::Px(10.0)),
                                                                 children![(
-                                                                    Text::new("1: Conveyors"),
+                                                                    Text::new("1: Portals"),
                                                                     TextFont {
                                                                         font_size: 18.0,
                                                                         ..Default::default()
@@ -403,7 +401,7 @@ pub fn manage_tiles(
                                                                 Interaction::default(),
                                                                 BorderRadius::all(Val::Px(10.0)),
                                                                 children![(
-                                                                    Text::new("2: Factories"),
+                                                                    Text::new("2: Conveyors"),
                                                                     TextFont {
                                                                         font_size: 18.0,
                                                                         ..Default::default()
@@ -463,7 +461,37 @@ pub fn manage_tiles(
                                                                 Interaction::default(),
                                                                 BorderRadius::all(Val::Px(10.0)),
                                                                 children![(
-                                                                    Text::new("4: Special"),
+                                                                    Text::new("4: Factories"),
+                                                                    TextFont {
+                                                                        font_size: 18.0,
+                                                                        ..Default::default()
+                                                                    },
+                                                                    TextColor(Color::WHITE),
+                                                                    TextLayout {
+                                                                        justify:
+                                                                            JustifyText::Center,
+                                                                        ..Default::default()
+                                                                    }
+                                                                )],
+                                                            ),
+                                                            (
+                                                                Button,
+                                                                Node {
+                                                                    width: Val::Percent(100.0),
+                                                                    height: Val::Px(50.0),
+                                                                    align_items: AlignItems::Center,
+                                                                    justify_content:
+                                                                        JustifyContent::Center,
+                                                                    ..Default::default()
+                                                                },
+                                                                BackgroundColor(Color::srgb(
+                                                                    0.2, 0.22, 0.25
+                                                                )),
+                                                                CoreCategory { category: 5 },
+                                                                Interaction::default(),
+                                                                BorderRadius::all(Val::Px(10.0)),
+                                                                children![(
+                                                                    Text::new("5: Storage"),
                                                                     TextFont {
                                                                         font_size: 18.0,
                                                                         ..Default::default()
@@ -478,7 +506,6 @@ pub fn manage_tiles(
                                                             ),
                                                         ],
                                                     ),
-                                                    // Items grid panel
                                                     (
                                                         Node {
                                                             width: Val::Percent(75.0),

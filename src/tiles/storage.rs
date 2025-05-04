@@ -1,17 +1,17 @@
-use std::{any::Any, collections::HashMap};
+use std::any::Any;
 
 use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
 use crate::{Action, Direction, Item, Position, WorldRes};
 
-use super::{Conveyor, Tile};
+use super::Tile;
 
 #[derive(Debug)]
 pub struct Storage {
     pub position: Position,
     pub direction: Direction,
-    pub inventory: HashMap<Item, u32>,
+    pub inventory: u32,
     pub storage_type: StorageType,
 }
 
@@ -25,11 +25,14 @@ impl Tile for Storage {
             Direction::Left => end_position.x -= 1,
             Direction::Right => end_position.x += 1,
         }
-        if let Some(tile) = world.tiles.get(&end_position) {
-            if let Some(conveyor) = tile.0.as_any().downcast_ref::<Conveyor>() {
-                if conveyor.item.is_none() {
-                    return Some(Action::Produce(self.position));
-                }
+
+        if world.tiles.contains_key(&end_position) {
+            if self.inventory >= 1 {
+                return Some(Action::Move(
+                    self.position,
+                    end_position,
+                    self.storage_type.stored_item(),
+                ));
             }
         }
 
@@ -53,33 +56,24 @@ impl Tile for Storage {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Encode, Decode)]
 pub enum StorageType {
-    SmallVault,
-    MediumVault,
-    LargeVault,
+    SmallRigotriumVault,
+    SmallFlextoriumVault,
+    SmallBattery,
 }
 
 impl StorageType {
-    fn capacity(&self) -> HashMap<Item, u32> {
+    pub fn capacity(&self) -> u32 {
         match self {
-            StorageType::SmallVault => {
-                let mut hashmap = HashMap::new();
-                hashmap.insert(Item::RawRigtorium, 5);
-                hashmap.insert(Item::RawFlextorium, 5);
-                hashmap
-            }
-            StorageType::MediumVault => {
-                let mut hashmap = HashMap::new();
-                hashmap.insert(Item::RawRigtorium, 10);
-                hashmap.insert(Item::RawFlextorium, 10);
-                hashmap
-            }
-
-            StorageType::LargeVault => {
-                let mut hashmap = HashMap::new();
-                hashmap.insert(Item::RawRigtorium, 20);
-                hashmap.insert(Item::RawFlextorium, 20);
-                hashmap
-            }
+            StorageType::SmallRigotriumVault => 10,
+            StorageType::SmallFlextoriumVault => 10,
+            StorageType::SmallBattery => 10,
+        }
+    }
+    fn stored_item(&self) -> Item {
+        match self {
+            StorageType::SmallRigotriumVault => Item::Rigtorium,
+            StorageType::SmallFlextoriumVault => Item::Flextorium,
+            StorageType::SmallBattery => Item::Electrine,
         }
     }
 }

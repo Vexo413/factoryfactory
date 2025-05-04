@@ -9,13 +9,10 @@ pub fn spawn_inventory(
     world: Res<WorldRes>,
     placer: Res<Placer>,
 ) {
-    // Handle inventory toggle with E key
     if keyboard_input.just_pressed(KeyCode::KeyE) {
         if let Ok((entity, _)) = inventory_query.single() {
-            // Remove existing inventory UI
             commands.entity(entity).despawn();
         } else {
-            // Spawn new inventory UI
             let inventory_entity = commands
                 .spawn((
                     Node {
@@ -37,7 +34,6 @@ pub fn spawn_inventory(
                 ))
                 .id();
 
-            // Add categories panel
             let categories_panel = commands
                 .spawn((
                     Node {
@@ -54,9 +50,7 @@ pub fn spawn_inventory(
                 ))
                 .id();
 
-            // Category buttons
             commands.entity(categories_panel).with_children(|parent| {
-                // Conveyors category
                 parent.spawn((
                     Button,
                     Node {
@@ -71,7 +65,7 @@ pub fn spawn_inventory(
                     Interaction::default(),
                     BorderRadius::all(Val::Px(10.0)),
                     children![(
-                        Text::new("1: Conveyors"),
+                        Text::new("1: Portals"),
                         TextFont {
                             font_size: 18.0,
                             ..Default::default()
@@ -84,7 +78,6 @@ pub fn spawn_inventory(
                     )],
                 ));
 
-                // Factories category
                 parent.spawn((
                     Button,
                     Node {
@@ -99,7 +92,7 @@ pub fn spawn_inventory(
                     Interaction::default(),
                     BorderRadius::all(Val::Px(10.0)),
                     children![(
-                        Text::new("2: Factories"),
+                        Text::new("2: Conveyors"),
                         TextFont {
                             font_size: 18.0,
                             ..Default::default()
@@ -112,7 +105,6 @@ pub fn spawn_inventory(
                     )],
                 ));
 
-                // Extractors category
                 parent.spawn((
                     Button,
                     Node {
@@ -140,7 +132,6 @@ pub fn spawn_inventory(
                     )],
                 ));
 
-                // Special category
                 parent.spawn((
                     Button,
                     Node {
@@ -155,7 +146,33 @@ pub fn spawn_inventory(
                     Interaction::default(),
                     BorderRadius::all(Val::Px(10.0)),
                     children![(
-                        Text::new("4: Special"),
+                        Text::new("4: Factories"),
+                        TextFont {
+                            font_size: 18.0,
+                            ..Default::default()
+                        },
+                        TextColor(Color::WHITE),
+                        TextLayout {
+                            justify: JustifyText::Center,
+                            ..Default::default()
+                        }
+                    )],
+                ));
+                parent.spawn((
+                    Button,
+                    Node {
+                        width: Val::Percent(100.0),
+                        height: Val::Px(50.0),
+                        align_items: AlignItems::Center,
+                        justify_content: JustifyContent::Center,
+                        ..Default::default()
+                    },
+                    BackgroundColor(Color::srgb(0.2, 0.22, 0.25)),
+                    InventoryCategory { category: 5 },
+                    Interaction::default(),
+                    BorderRadius::all(Val::Px(10.0)),
+                    children![(
+                        Text::new("5: Storage"),
                         TextFont {
                             font_size: 18.0,
                             ..Default::default()
@@ -169,7 +186,6 @@ pub fn spawn_inventory(
                 ));
             });
 
-            // Items panel
             let items_panel = commands
                 .spawn((
                     Node {
@@ -188,7 +204,6 @@ pub fn spawn_inventory(
                 ))
                 .id();
 
-            // Populate items for initial category (1)
             for ((type_a, type_b), count) in world.resources.iter() {
                 if *count > 0 && *type_a == 1 {
                     let texture_path = get_tile_texture((*type_a, *type_b));
@@ -245,7 +260,6 @@ pub fn spawn_inventory(
                 }
             }
 
-            // Add panels to inventory
             commands
                 .entity(inventory_entity)
                 .add_child(categories_panel);
@@ -260,7 +274,6 @@ pub fn update_inventory(
     category_query: Query<(&InventoryCategory, Entity)>,
 ) {
     if let Ok((_, inventory)) = inventory_query.single() {
-        // Update category button colors
         for (category, entity) in category_query.iter() {
             let color = if category.category == inventory.selected_category {
                 Color::srgb(0.45, 0.67, 0.9)
@@ -286,7 +299,6 @@ pub fn handle_inventory_interaction(
     item_panel_query: Query<Entity, With<InventoryItemsPanel>>,
     existing_items_query: Query<Entity, With<InventoryItem>>,
 ) {
-    // Close context menu when clicking elsewhere
     if mouse_button_input.just_pressed(MouseButton::Left)
         || mouse_button_input.just_pressed(MouseButton::Right)
     {
@@ -308,20 +320,16 @@ pub fn handle_inventory_interaction(
         }
     }
 
-    // Handle category selection and update items
     for (interaction, category) in category_query.iter() {
         if matches!(interaction, Interaction::Pressed) {
             if let Ok((_, mut inventory)) = inventory_query.single_mut() {
-                // Only update items if the category actually changed
                 if inventory.selected_category != category.category {
                     inventory.selected_category = category.category;
 
-                    // Remove existing items
                     for item_entity in existing_items_query.iter() {
                         commands.entity(item_entity).despawn();
                     }
 
-                    // Spawn new items for selected category
                     if let Ok(panel_entity) = item_panel_query.single() {
                         for ((type_a, type_b), count) in world.resources.iter() {
                             if *count > 0 && *type_a == category.category {
@@ -384,12 +392,10 @@ pub fn handle_inventory_interaction(
         }
     }
 
-    // Handle item selection
     for (interaction, item) in item_query.iter() {
         if matches!(interaction, Interaction::Pressed) {
             placer.tile_type = item.tile_type;
 
-            // Update background colors of all items
             for (mut bg_color, option) in bg_color_query.iter_mut() {
                 *bg_color = if option.tile_type == placer.tile_type {
                     BackgroundColor(Color::srgb(0.45, 0.67, 0.9))
@@ -400,16 +406,13 @@ pub fn handle_inventory_interaction(
         }
     }
 
-    // Handle right-click on items for context menu
     if mouse_button_input.just_pressed(MouseButton::Right) {
         for (interaction, item) in item_query.iter() {
             if matches!(interaction, Interaction::Hovered) {
-                // Clear any existing context menu
                 for entity in context_menu_query.iter() {
                     commands.entity(entity).despawn();
                 }
 
-                // Spawn new context menu
                 commands.spawn((
                     Node {
                         width: Val::Px(150.0),

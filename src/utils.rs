@@ -8,20 +8,22 @@ use std::collections::{HashMap, HashSet};
 pub fn get_tile_texture(tile_type: (u8, u8)) -> &'static str {
     match tile_type {
         (0, 1) => "embedded://textures/tiles/none.png",
-        (1, 1) => "embedded://textures/tiles/conveyors/back.png",
-        (1, 2) => "embedded://textures/tiles/conveyors/router.png",
-        (1, 3) => "embedded://textures/tiles/conveyors/junction.png",
-        (2, 1) => "embedded://textures/tiles/factories/rigtorium_smelter.png",
-        (2, 2) => "embedded://textures/tiles/factories/flextorium_fabricator.png",
-        (2, 3) => "embedded://textures/tiles/factories/rigtorium_rod_molder.png",
-        (2, 4) => "embedded://textures/tiles/factories/conveyor_constructor.png",
-        (2, 5) => "embedded://textures/tiles/factories/router_constructor.png",
+        (1, 1) => "embedded://textures/tiles/core.png",
+        (1, 2) => "embedded://textures/tiles/portal.png",
+        (2, 1) => "embedded://textures/tiles/conveyors/back.png",
+        (2, 2) => "embedded://textures/tiles/conveyors/router.png",
+        (2, 3) => "embedded://textures/tiles/conveyors/junction.png",
         (3, 1) => "embedded://textures/tiles/extractors/raw_rigtorium.png",
         (3, 2) => "embedded://textures/tiles/extractors/raw_flextorium.png",
         (3, 3) => "embedded://textures/tiles/extractors/electrine.png",
-        (4, 1) => "embedded://textures/tiles/portal.png",
-        (5, 1) => "embedded://textures/tiles/storage.png",
-        (6, 1) => "embedded://textures/tiles/core.png",
+        (4, 1) => "embedded://textures/tiles/factories/rigtorium_smelter.png",
+        (4, 2) => "embedded://textures/tiles/factories/flextorium_fabricator.png",
+        (4, 3) => "embedded://textures/tiles/factories/rigtorium_rod_molder.png",
+        (4, 4) => "embedded://textures/tiles/factories/conveyor_constructor.png",
+        (4, 5) => "embedded://textures/tiles/factories/router_constructor.png",
+        (5, 1) => "embedded://textures/tiles/small_rigtorium_vault.png",
+        (5, 2) => "embedded://textures/tiles/small_flextorium_vault.png",
+        (5, 3) => "embedded://textures/tiles/small_battery.png",
         _ => "embedded://textures/tiles/conveyors/back.png",
     }
 }
@@ -32,18 +34,22 @@ pub fn format_tile_id(tile_type: (u8, u8)) -> String {
 
 pub fn get_tile_name(tile_type: (u8, u8)) -> String {
     match tile_type {
-        (1, 1) => "Conveyor",
-        (1, 2) => "Router",
-        (1, 3) => "Junction",
-        (2, 1) => "Rigtorium Smelter",
-        (2, 2) => "Flextorium Fabricator",
-        (2, 3) => "Rigtorium Rod Molder",
-        (2, 4) => "Conveyor Constructor",
-        (2, 5) => "Router Constructor",
+        (1, 1) => "Core",
+        (1, 2) => "Portal",
+        (2, 1) => "Conveyor",
+        (2, 2) => "Router",
+        (2, 3) => "Junction",
         (3, 1) => "Raw Rigtorium Extractor",
         (3, 2) => "Raw Flextorium Extractor",
         (3, 3) => "Electrine Extractor",
-        (4, 1) => "Portal",
+        (4, 1) => "Rigtorium Smelter",
+        (4, 2) => "Flextorium Fabricator",
+        (4, 3) => "Rigtorium Rod Molder",
+        (4, 4) => "Conveyor Constructor",
+        (4, 5) => "Router Constructor",
+        (5, 1) => "SmallRigtoriumVault",
+        (5, 2) => "SmallFlextoriumVault",
+        (5, 3) => "SmallBattery",
         _ => "Unknown Tile",
     }
     .to_string()
@@ -51,19 +57,22 @@ pub fn get_tile_name(tile_type: (u8, u8)) -> String {
 
 pub fn get_tile_core_interval(tile_type: (u8, u8)) -> u32 {
     match tile_type {
-        (1, 1) => 20,  // Conveyor - 1 minute
-        (1, 2) => 80,  // Router - 1 minute 20 seconds
-        (1, 3) => 90,  // Junction - 1 minute 30 seconds
-        (2, 1) => 150, // Rigtorium Smelter - 2 minutes 30 seconds
-        (2, 2) => 150, // Flextorium Fabricator - 2 minutes 30 seconds
-        (2, 3) => 180,
-        (2, 4) => 300,
-        (2, 5) => 300,
-        (3, 1) => 240, // Raw Rigtorium Extractor - 4 minutes
-        (3, 2) => 240, // Raw Flextorium Extractor - 4 minutes
-        (3, 3) => 180, // Electrine Extractor - 3 minutes
-        (4, 1) => 100, // Portal - 1 minute 40 seconds
-        _ => 60,       // Default - 1 minute
+        (1, 2) => 50,
+        (2, 1) => 10,
+        (2, 2) => 20,
+        (2, 3) => 20,
+        (3, 1) => 30,
+        (3, 2) => 30,
+        (3, 3) => 30,
+        (4, 1) => 40,
+        (4, 2) => 40,
+        (4, 3) => 40,
+        (4, 4) => 40,
+        (4, 5) => 40,
+        (5, 1) => 25,
+        (5, 2) => 25,
+        (5, 3) => 25,
+        _ => 60,
     }
 }
 
@@ -74,6 +83,22 @@ pub fn get_new_tile(
 ) -> (Box<dyn Tile>, (u8, u8)) {
     match tile_type {
         (1, 1) => (
+            Box::new(Core {
+                position,
+                interval: 10,
+                ticks: 0,
+                tile_id: (1, 1),
+            }) as Box<dyn Tile>,
+            tile_type,
+        ),
+        (1, 2) => (
+            Box::new(Portal {
+                position,
+                item: None,
+            }) as Box<dyn Tile>,
+            tile_type,
+        ),
+        (2, 1) => (
             Box::new(Conveyor {
                 position,
                 direction,
@@ -81,7 +106,7 @@ pub fn get_new_tile(
             }) as Box<dyn Tile>,
             tile_type,
         ),
-        (1, 2) => (
+        (2, 2) => (
             Box::new(Router {
                 position,
                 direction,
@@ -90,7 +115,7 @@ pub fn get_new_tile(
             }) as Box<dyn Tile>,
             tile_type,
         ),
-        (1, 3) => (
+        (2, 3) => (
             Box::new(Junction {
                 position,
                 horizontal_item: None,
@@ -98,67 +123,6 @@ pub fn get_new_tile(
             }) as Box<dyn Tile>,
             tile_type,
         ),
-        (2, 1) => (
-            Box::new(Factory {
-                factory_type: FactoryType::RigtoriumSmelter,
-                position,
-                direction,
-                inventory: HashMap::new(),
-                item: None,
-                interval: 2,
-                ticks: 0,
-            }) as Box<dyn Tile>,
-            tile_type,
-        ),
-        (2, 2) => (
-            Box::new(Factory {
-                factory_type: FactoryType::FlextoriumFabricator,
-                position,
-                direction,
-                inventory: HashMap::new(),
-                item: None,
-                interval: 2,
-                ticks: 0,
-            }) as Box<dyn Tile>,
-            tile_type,
-        ),
-        (2, 3) => (
-            Box::new(Factory {
-                factory_type: FactoryType::RigtoriumRodMolder,
-                position,
-                direction,
-                inventory: HashMap::new(),
-                item: None,
-                interval: 2,
-                ticks: 0,
-            }) as Box<dyn Tile>,
-            tile_type,
-        ),
-        (2, 4) => (
-            Box::new(Factory {
-                factory_type: FactoryType::ConveyorConstructor,
-                position,
-                direction,
-                inventory: HashMap::new(),
-                item: None,
-                interval: 5,
-                ticks: 0,
-            }) as Box<dyn Tile>,
-            tile_type,
-        ),
-        (2, 5) => (
-            Box::new(Factory {
-                factory_type: FactoryType::RouterConstructor,
-                position,
-                direction,
-                inventory: HashMap::new(),
-                item: None,
-                interval: 5,
-                ticks: 0,
-            }) as Box<dyn Tile>,
-            tile_type,
-        ),
-
         (3, 1) => (
             Box::new(Extractor {
                 position,
@@ -187,30 +151,94 @@ pub fn get_new_tile(
             tile_type,
         ),
         (4, 1) => (
-            Box::new(Portal {
+            Box::new(Factory {
+                factory_type: FactoryType::RigtoriumSmelter,
                 position,
+                direction,
+                inventory: HashMap::new(),
                 item: None,
+                interval: 2,
+                ticks: 0,
             }) as Box<dyn Tile>,
             tile_type,
         ),
+        (4, 2) => (
+            Box::new(Factory {
+                factory_type: FactoryType::FlextoriumFabricator,
+                position,
+                direction,
+                inventory: HashMap::new(),
+                item: None,
+                interval: 2,
+                ticks: 0,
+            }) as Box<dyn Tile>,
+            tile_type,
+        ),
+        (4, 3) => (
+            Box::new(Factory {
+                factory_type: FactoryType::RigtoriumRodMolder,
+                position,
+                direction,
+                inventory: HashMap::new(),
+                item: None,
+                interval: 2,
+                ticks: 0,
+            }) as Box<dyn Tile>,
+            tile_type,
+        ),
+        (4, 4) => (
+            Box::new(Factory {
+                factory_type: FactoryType::ConveyorConstructor,
+                position,
+                direction,
+                inventory: HashMap::new(),
+                item: None,
+                interval: 5,
+                ticks: 0,
+            }) as Box<dyn Tile>,
+            tile_type,
+        ),
+        (4, 5) => (
+            Box::new(Factory {
+                factory_type: FactoryType::RouterConstructor,
+                position,
+                direction,
+                inventory: HashMap::new(),
+                item: None,
+                interval: 5,
+                ticks: 0,
+            }) as Box<dyn Tile>,
+            tile_type,
+        ),
+
         (5, 1) => (
             Box::new(Storage {
                 position,
                 direction,
-                inventory: HashMap::new(),
-                storage_type: StorageType::SmallVault,
+                inventory: 0,
+                storage_type: StorageType::SmallRigotriumVault,
             }) as Box<dyn Tile>,
             tile_type,
         ),
-        (6, 1) => (
-            Box::new(Core {
+        (5, 2) => (
+            Box::new(Storage {
                 position,
-                interval: 10,
-                ticks: 0,
-                tile_id: (1, 1),
+                direction,
+                inventory: 0,
+                storage_type: StorageType::SmallFlextoriumVault,
             }) as Box<dyn Tile>,
             tile_type,
         ),
+        (5, 3) => (
+            Box::new(Storage {
+                position,
+                direction,
+                inventory: 0,
+                storage_type: StorageType::SmallBattery,
+            }) as Box<dyn Tile>,
+            tile_type,
+        ),
+
         _ => (
             Box::new(Conveyor {
                 position,

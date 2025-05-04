@@ -11,7 +11,6 @@ use std::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 use bevy_embedded_assets::{EmbeddedAssetPlugin, PluginMode};
 
-// Re-export commonly used types
 pub use components::*;
 pub use constants::*;
 use rand::{Rng, rng};
@@ -44,17 +43,15 @@ fn main() {
         .add_systems(
             Update,
             (
-                // World systems
                 (
                     systems::manage_terrain_chunks,
                     systems::tick_tiles,
-                    systems::update_tile_visuals.after(tick_tiles),
+                    systems::spawn_animations.after(tick_tiles),
+                    systems::update_tile_visuals.after(spawn_animations),
                     systems::animate_items.after(update_tile_visuals),
                 )
                     .chain(),
-                // Player interaction systems
                 (systems::manage_tiles, systems::move_camera).chain(),
-                // UI systems
                 (
                     systems::update_inventory,
                     systems::handle_inventory_interaction,
@@ -72,30 +69,21 @@ fn main() {
         .run();
 }
 fn setup_resources(mut commands: Commands) {
-    // Try to load the saved game
     match WorldRes::load_game("savegame.ffs") {
         Ok((world, hotkeys_map)) => {
-            // If successful, insert both resources with loaded data
             commands.insert_resource(world);
             commands.insert_resource(Hotkeys {
                 mappings: hotkeys_map,
             });
         }
         Err(_) => {
-            // If loading fails, insert default resources
             let mut resources = HashMap::new();
-            resources.insert((1, 1), 40);
-            resources.insert((1, 2), 10);
-            resources.insert((1, 3), 10);
-            resources.insert((2, 1), 10);
-            resources.insert((2, 2), 10);
-            resources.insert((2, 3), 10);
-            resources.insert((2, 4), 10);
-            resources.insert((3, 1), 10);
-            resources.insert((3, 2), 10);
-            resources.insert((3, 3), 10);
-            resources.insert((4, 1), 10);
-            resources.insert((5, 1), 10);
+            resources.insert((2, 1), 20);
+            resources.insert((2, 2), 5);
+            resources.insert((2, 3), 5);
+            resources.insert((3, 1), 1);
+            resources.insert((3, 3), 1);
+            resources.insert((4, 1), 1);
 
             let mut tiles: HashMap<Position, (Box<dyn Tile + 'static>, (u8, u8))> = HashMap::new();
             tiles.insert(
@@ -126,7 +114,6 @@ fn setup_resources(mut commands: Commands) {
     }
 }
 
-// Setup function that initializes the game world
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>, world: Res<WorldRes>) {
     commands.spawn(Camera2d);
 

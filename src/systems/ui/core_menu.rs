@@ -16,25 +16,22 @@ pub fn handle_core_context_menu(
     >,
     asset_server: Res<AssetServer>,
 ) {
-    // Handle category changes
     for (interaction, category) in category_query.iter() {
         if matches!(interaction, Interaction::Pressed) {
             if let Ok((_, mut core_menu)) = core_menu_query.single_mut() {
                 core_menu.selected_category = category.category;
 
-                // Get current core tile_id for highlighting
                 let current_tile_id = if let Some((tile, _)) = world.tiles.get(&core_menu.position)
                 {
                     if let Some(core) = tile.as_any().downcast_ref::<Core>() {
                         core.tile_id
                     } else {
-                        (0, 1) // default
+                        (0, 1)
                     }
                 } else {
-                    (0, 1) // default
+                    (0, 1)
                 };
 
-                // Refresh tile options with the current selection
                 update_core_tiles(
                     &mut commands,
                     &world,
@@ -48,18 +45,15 @@ pub fn handle_core_context_menu(
         }
     }
 
-    // Handle tile type selection
     for (interaction, tile_option) in interaction_tile_query.iter() {
         if matches!(interaction, Interaction::Pressed) {
             if let Ok((_, core_context)) = core_menu_query.single() {
                 if let Some((tile, _)) = world.tiles.get_mut(&core_context.position) {
                     if let Some(core) = tile.as_any_mut().downcast_mut::<Core>() {
-                        // Set new tile type and reset ticks
                         core.tile_id = tile_option.tile_type;
                         core.interval = get_tile_core_interval(tile_option.tile_type);
                         core.ticks = 0;
 
-                        // Update background colors
                         for (mut bg_color, option) in bg_color_query.iter_mut() {
                             *bg_color = if option.tile_type == tile_option.tile_type {
                                 BackgroundColor(Color::srgb(0.45, 0.67, 0.9))
@@ -73,7 +67,6 @@ pub fn handle_core_context_menu(
         }
     }
 
-    // Handle close button
     for (interaction, name) in close_button_query.iter() {
         if matches!(interaction, Interaction::Pressed) && name.as_str() == "close_button" {
             if let Ok((entity, _)) = core_menu_query.single() {
@@ -82,17 +75,16 @@ pub fn handle_core_context_menu(
         }
     }
 
-    // Initial population of the menu when it's created - get the core's current tile_id
     if let Ok((_, core_menu)) = core_menu_query.single() {
         if tile_panel_query.iter().len() > 0 && tile_option_query.iter().len() == 0 {
             let current_tile_id = if let Some((tile, _)) = world.tiles.get(&core_menu.position) {
                 if let Some(core) = tile.as_any().downcast_ref::<Core>() {
                     core.tile_id
                 } else {
-                    (0, 1) // default
+                    (0, 1)
                 }
             } else {
-                (0, 1) // default
+                (0, 1)
             };
 
             update_core_tiles(
@@ -112,7 +104,6 @@ pub fn update_core_menu_ui(
     mut category_query: Query<(&CoreCategory, &mut BackgroundColor)>,
 ) {
     if let Ok(core_menu) = core_menu_query.single() {
-        // Update the category colors based on the selection
         for (cat, mut bg_color) in category_query.iter_mut() {
             *bg_color = if cat.category == core_menu.selected_category {
                 BackgroundColor(Color::srgb(0.45, 0.67, 0.9))
@@ -146,20 +137,19 @@ fn update_core_tiles(
     asset_server: &AssetServer,
     panel_query: &Query<Entity, With<CoreItemsPanel>>,
     tile_query: &Query<Entity, With<TileTypeOption>>,
-    selected_tile_id: (u8, u8), // Add current core selected tile to highlight it
+    selected_tile_id: (u8, u8),
 ) {
-    // Remove existing tile options
     for entity in tile_query.iter() {
         commands.entity(entity).despawn();
     }
 
-    // If we can get the panel, populate it with new tiles
     if let Ok(panel_entity) = panel_query.single() {
         let tile_types = match category {
-            1 => vec![(1, 1), (1, 2), (1, 3)],                 // Conveyors
-            2 => vec![(2, 1), (2, 2), (2, 3), (2, 4), (2, 5)], // Factories
-            3 => vec![(3, 1), (3, 2), (3, 3)],                 // Extractors
-            4 => vec![(4, 1), (5, 1)],                         // Special
+            1 => vec![(1, 2)],
+            2 => vec![(2, 1), (2, 2), (2, 3)],
+            3 => vec![(3, 1), (3, 2), (3, 3)],
+            4 => vec![(4, 1), (4, 2), (4, 3), (4, 4), (4, 5)],
+            5 => vec![(5, 1), (5, 2), (5, 3)],
             _ => vec![],
         };
 
@@ -190,7 +180,6 @@ fn update_core_tiles(
                     Interaction::default(),
                 ))
                 .with_children(|parent| {
-                    // Tile image
                     parent.spawn((
                         Node {
                             width: Val::Px(48.0),
@@ -201,7 +190,6 @@ fn update_core_tiles(
                         ImageNode::new(asset_server.load(get_tile_texture(tile_type))),
                     ));
 
-                    // Tile name
                     parent.spawn((
                         Text::new(get_tile_name(tile_type)),
                         TextFont {
@@ -215,7 +203,6 @@ fn update_core_tiles(
                         },
                     ));
 
-                    // Tile interval
                     parent.spawn((
                         Text::new(format!("Takes {} seconds", interval)),
                         TextFont {
@@ -229,7 +216,6 @@ fn update_core_tiles(
                         },
                     ));
 
-                    // Available count
                     parent.spawn((
                         Text::new(format!("Available: {}", count)),
                         TextFont {

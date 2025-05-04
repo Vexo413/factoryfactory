@@ -47,7 +47,7 @@ impl Default for Placer {
     fn default() -> Self {
         Self {
             direction: Direction::Up,
-            tile_type: (1, 1),
+            tile_type: (0, 1),
             preview_entity: None,
             zoom_level: 1.0,
         }
@@ -103,7 +103,7 @@ pub enum SerializableTile {
     Storage {
         position: Position,
         direction: Direction,
-        inventory: HashMap<Item, u32>,
+        inventory: u32,
         storage_type: StorageType,
     },
     Portal {
@@ -129,7 +129,7 @@ pub struct SerializableWorld {
     pub resources: HashMap<(u8, u8), u32>,
     pub world_seed: u32,
     pub tick_count: i32,
-    pub hotkey_mappings: HashMap<u8, (u8, u8)>, // Added hotkey mappings
+    pub hotkey_mappings: HashMap<u8, (u8, u8)>,
 }
 
 impl WorldRes {
@@ -201,7 +201,7 @@ impl WorldRes {
             resources: self.resources.clone(),
             world_seed: self.world_seed,
             tick_count: self.tick_count,
-            hotkey_mappings: hotkeys.mappings.clone(), // Store hotkey mappings
+            hotkey_mappings: hotkeys.mappings.clone(),
         };
 
         let config = config::standard().with_fixed_int_encoding().with_no_limit();
@@ -380,7 +380,6 @@ impl WorldRes {
             actions: Vec::new(),
         };
 
-        // Return both the world resource and the hotkey mappings
         Ok((world_res, serializable_world.hotkey_mappings))
     }
 }
