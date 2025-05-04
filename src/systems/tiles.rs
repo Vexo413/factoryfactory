@@ -25,62 +25,42 @@ pub fn manage_tiles(
         if keyboard_input.just_pressed(KeyCode::Digit0) {
             if let Some(&tile_type) = hotkeys.mappings.get(&0) {
                 placer.tile_type = tile_type;
-            } else {
-                placer.tile_type = (2, 2);
             }
         } else if keyboard_input.just_pressed(KeyCode::Digit1) {
             if let Some(&tile_type) = hotkeys.mappings.get(&1) {
                 placer.tile_type = tile_type;
-            } else {
-                placer.tile_type = (1, 1);
             }
         } else if keyboard_input.just_pressed(KeyCode::Digit2) {
             if let Some(&tile_type) = hotkeys.mappings.get(&2) {
                 placer.tile_type = tile_type;
-            } else {
-                placer.tile_type = (2, 1);
             }
         } else if keyboard_input.just_pressed(KeyCode::Digit3) {
             if let Some(&tile_type) = hotkeys.mappings.get(&3) {
                 placer.tile_type = tile_type;
-            } else {
-                placer.tile_type = (3, 1);
             }
         } else if keyboard_input.just_pressed(KeyCode::Digit4) {
             if let Some(&tile_type) = hotkeys.mappings.get(&4) {
                 placer.tile_type = tile_type;
-            } else {
-                placer.tile_type = (3, 2);
             }
         } else if keyboard_input.just_pressed(KeyCode::Digit5) {
             if let Some(&tile_type) = hotkeys.mappings.get(&5) {
                 placer.tile_type = tile_type;
-            } else {
-                placer.tile_type = (3, 3);
             }
         } else if keyboard_input.just_pressed(KeyCode::Digit6) {
             if let Some(&tile_type) = hotkeys.mappings.get(&6) {
                 placer.tile_type = tile_type;
-            } else {
-                placer.tile_type = (4, 3);
             }
         } else if keyboard_input.just_pressed(KeyCode::Digit7) {
             if let Some(&tile_type) = hotkeys.mappings.get(&7) {
                 placer.tile_type = tile_type;
-            } else {
-                placer.tile_type = (2, 3);
             }
         } else if keyboard_input.just_pressed(KeyCode::Digit8) {
             if let Some(&tile_type) = hotkeys.mappings.get(&8) {
                 placer.tile_type = tile_type;
-            } else {
-                placer.tile_type = (4, 1);
             }
         } else if keyboard_input.just_pressed(KeyCode::Digit9) {
             if let Some(&tile_type) = hotkeys.mappings.get(&9) {
                 placer.tile_type = tile_type;
-            } else {
-                placer.tile_type = (1, 2);
             }
         }
     }

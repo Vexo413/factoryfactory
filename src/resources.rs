@@ -2,7 +2,6 @@ use bevy::prelude::*;
 use bincode::{Decode, Encode, config};
 use flate2::{Compression, read::DeflateDecoder, write::DeflateEncoder};
 use noise::{NoiseFn, Perlin};
-use rand::{Rng, rng};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
@@ -130,10 +129,11 @@ pub struct SerializableWorld {
     pub resources: HashMap<(u8, u8), u32>,
     pub world_seed: u32,
     pub tick_count: i32,
+    pub hotkey_mappings: HashMap<u8, (u8, u8)>, // Added hotkey mappings
 }
 
 impl WorldRes {
-    pub fn save(&self, path: impl AsRef<Path>) -> Result<(), io::Error> {
+    pub fn save(&self, path: impl AsRef<Path>, hotkeys: &Hotkeys) -> Result<(), io::Error> {
         let serializable_world = SerializableWorld {
             tiles: self
                 .tiles
@@ -201,6 +201,7 @@ impl WorldRes {
             resources: self.resources.clone(),
             world_seed: self.world_seed,
             tick_count: self.tick_count,
+            hotkey_mappings: hotkeys.mappings.clone(), // Store hotkey mappings
         };
 
         let config = config::standard().with_fixed_int_encoding().with_no_limit();
@@ -216,7 +217,7 @@ impl WorldRes {
         Ok(())
     }
 
-    fn load(path: impl AsRef<Path>) -> io::Result<Self> {
+    pub fn load_game(path: impl AsRef<Path>) -> io::Result<(WorldRes, HashMap<u8, (u8, u8)>)> {
         let file = File::open(path)?;
 
         let mut decoder = DeflateDecoder::new(file);
@@ -368,7 +369,7 @@ impl WorldRes {
             }
         }
 
-        Ok(WorldRes {
+        let world_res = WorldRes {
             tiles,
             terrain,
             loaded_chunks,
@@ -377,50 +378,9 @@ impl WorldRes {
             tick_timer: Timer::from_seconds(TICK_LENGTH, TimerMode::Repeating),
             tick_count: serializable_world.tick_count,
             actions: Vec::new(),
-        })
-    }
-}
+        };
 
-impl Default for WorldRes {
-    fn default() -> Self {
-        let world = WorldRes::load("savegame.ff");
-        let mut resources = HashMap::new();
-        resources.insert((1, 1), 40);
-        resources.insert((1, 2), 10);
-        resources.insert((1, 3), 10);
-        resources.insert((2, 1), 10);
-        resources.insert((2, 2), 10);
-        resources.insert((2, 3), 10);
-        resources.insert((2, 4), 10);
-        resources.insert((3, 1), 10);
-        resources.insert((3, 2), 10);
-        resources.insert((3, 3), 10);
-        resources.insert((4, 1), 10);
-        resources.insert((5, 1), 10);
-
-        let mut tiles: HashMap<Position, (Box<dyn Tile + 'static>, (u8, u8))> = HashMap::new();
-        tiles.insert(
-            Position::new(0, 0),
-            (
-                Box::new(Core {
-                    position: Position::new(0, 0),
-                    interval: 10,
-                    ticks: 0,
-                    tile_id: (0, 1),
-                }),
-                (6, 1),
-            ),
-        );
-
-        world.unwrap_or(WorldRes {
-            tiles,
-            terrain: HashMap::new(),
-            loaded_chunks: HashSet::new(),
-            resources,
-            world_seed: rng().random_range(u32::MIN..u32::MAX),
-            tick_timer: Timer::from_seconds(TICK_LENGTH, TimerMode::Repeating),
-            tick_count: 0,
-            actions: Vec::new(),
-        })
+        // Return both the world resource and the hotkey mappings
+        Ok((world_res, serializable_world.hotkey_mappings))
     }
 }

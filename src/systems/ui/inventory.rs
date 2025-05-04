@@ -402,7 +402,6 @@ pub fn handle_inventory_interaction(
 
     // Handle right-click on items for context menu
     if mouse_button_input.just_pressed(MouseButton::Right) {
-        println!("Bacon");
         for (interaction, item) in item_query.iter() {
             if matches!(interaction, Interaction::Hovered) {
                 // Clear any existing context menu

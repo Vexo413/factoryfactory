@@ -14,9 +14,7 @@ pub struct Core {
 
 impl Tile for Core {
     fn tick(&self, _world: &WorldRes) -> Option<Action> {
-        dbg!(self.ticks);
         if self.ticks >= self.interval {
-            println!("created: {:?}", self.tile_id);
             return Some(Action::Teleport(self.position, self.tile_id));
         } else {
             return Some(Action::IncreaseTicks(self.position));

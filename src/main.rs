@@ -6,13 +6,15 @@ mod tiles;
 mod types;
 mod utils;
 
+use std::collections::{HashMap, HashSet};
+
 use bevy::prelude::*;
 use bevy_embedded_assets::{EmbeddedAssetPlugin, PluginMode};
-use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
 
 // Re-export commonly used types
 pub use components::*;
 pub use constants::*;
+use rand::{Rng, rng};
 pub use resources::*;
 pub use systems::*;
 pub use tiles::*;
@@ -36,15 +38,9 @@ fn main() {
             EmbeddedAssetPlugin {
                 mode: PluginMode::AutoLoad,
             },
-            EguiPlugin {
-                enable_multipass_for_primary_context: true,
-            },
-            WorldInspectorPlugin::new(),
         ))
-        .insert_resource(WorldRes::default())
         .insert_resource(Placer::default())
-        .insert_resource(Hotkeys::default())
-        .add_systems(Startup, setup)
+        .add_systems(Startup, (setup_resources, setup.after(setup_resources)))
         .add_systems(
             Update,
             (
@@ -74,6 +70,60 @@ fn main() {
             ),
         )
         .run();
+}
+fn setup_resources(mut commands: Commands) {
+    // Try to load the saved game
+    match WorldRes::load_game("savegame.ffs") {
+        Ok((world, hotkeys_map)) => {
+            // If successful, insert both resources with loaded data
+            commands.insert_resource(world);
+            commands.insert_resource(Hotkeys {
+                mappings: hotkeys_map,
+            });
+        }
+        Err(_) => {
+            // If loading fails, insert default resources
+            let mut resources = HashMap::new();
+            resources.insert((1, 1), 40);
+            resources.insert((1, 2), 10);
+            resources.insert((1, 3), 10);
+            resources.insert((2, 1), 10);
+            resources.insert((2, 2), 10);
+            resources.insert((2, 3), 10);
+            resources.insert((2, 4), 10);
+            resources.insert((3, 1), 10);
+            resources.insert((3, 2), 10);
+            resources.insert((3, 3), 10);
+            resources.insert((4, 1), 10);
+            resources.insert((5, 1), 10);
+
+            let mut tiles: HashMap<Position, (Box<dyn Tile + 'static>, (u8, u8))> = HashMap::new();
+            tiles.insert(
+                Position::new(0, 0),
+                (
+                    Box::new(Core {
+                        position: Position::new(0, 0),
+                        interval: 10,
+                        ticks: 0,
+                        tile_id: (6, 1),
+                    }),
+                    (6, 1),
+                ),
+            );
+
+            commands.insert_resource(WorldRes {
+                tiles,
+                terrain: HashMap::new(),
+                loaded_chunks: HashSet::new(),
+                resources,
+                world_seed: rng().random_range(u32::MIN..u32::MAX),
+                tick_timer: Timer::from_seconds(TICK_LENGTH, TimerMode::Repeating),
+                tick_count: 0,
+                actions: Vec::new(),
+            });
+            commands.insert_resource(Hotkeys::default());
+        }
+    }
 }
 
 // Setup function that initializes the game world

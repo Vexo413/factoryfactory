@@ -1,4 +1,4 @@
-use crate::{tiles::*, utils::*};
+use crate::{Hotkeys, tiles::*, utils::*};
 use bevy::prelude::*;
 use noise::*;
 use std::collections::HashSet;
@@ -159,6 +159,7 @@ pub fn tick_tiles(
     time: Res<Time>,
     mut commands: Commands,
     mut world: ResMut<WorldRes>,
+    hotkeys: Res<Hotkeys>,
     asset_server: Res<AssetServer>,
 ) {
     world.tick_timer.tick(time.delta());
@@ -594,8 +595,6 @@ pub fn tick_tiles(
                             }
                         } else if tile.0.as_any().is::<Router>() {
                             if !filled_positions.contains(end) && empty_positions.contains(end) {
-                                dbg!(!filled_positions.contains(end));
-                                dbg!(empty_positions.contains(end));
                                 filled_positions.insert(*end);
                                 empty_positions.remove(end);
 
@@ -934,7 +933,7 @@ pub fn tick_tiles(
                 _ => {}
             }
         }
-        if let Err(err) = world.save("savegame.ff") {
+        if let Err(err) = world.save("savegame.ffs", &hotkeys) {
             eprintln!("Error saving game: {}", err);
         }
     }

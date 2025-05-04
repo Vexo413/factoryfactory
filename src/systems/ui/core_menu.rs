@@ -131,11 +131,8 @@ pub fn update_core_progress_text(
         if let Some((tile, _)) = world.tiles.get(&core_menu.position) {
             if let Some(core) = tile.as_any().downcast_ref::<Core>() {
                 for (mut text, name) in text_query.iter_mut() {
-                    println!("main");
                     if name.as_str() == "core_progress" {
-                        println!("a");
                         text.0 = format!("Progress: {}/{} seconds", core.ticks, core.interval);
-                        println!("b");
                     }
                 }
             }
