@@ -38,11 +38,11 @@ cargo run --release
 
 `WASD`: Move camera
 
-`0-9`: Select tile
+`E`: Inventory / Tile selection
 
-`Scroll`: Cycle through tiles
+`Scroll`: Cycle through tiles / Zoom
 
-`Left Click`: Place selected tiles
+`Left Click`: Place selected tile / Core menu
 
 `Right Click`: Remove tile
 
