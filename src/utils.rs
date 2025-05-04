@@ -5,7 +5,6 @@ use crate::{
 use bevy::prelude::*;
 use std::collections::{HashMap, HashSet};
 
-/// Get the texture path for a specific tile type
 pub fn get_tile_texture(tile_type: (u8, u8)) -> &'static str {
     match tile_type {
         (0, 1) => "embedded://textures/tiles/none.png",
@@ -27,12 +26,10 @@ pub fn get_tile_texture(tile_type: (u8, u8)) -> &'static str {
     }
 }
 
-/// Format a tile ID in a human-readable format
 pub fn format_tile_id(tile_type: (u8, u8)) -> String {
     format!("{}, {}", tile_type.0, tile_type.1)
 }
 
-/// Get a human-readable name for a tile type
 pub fn get_tile_name(tile_type: (u8, u8)) -> String {
     match tile_type {
         (1, 1) => "Conveyor",
@@ -52,7 +49,6 @@ pub fn get_tile_name(tile_type: (u8, u8)) -> String {
     .to_string()
 }
 
-/// Get the production interval for a tile type when used in the core
 pub fn get_tile_core_interval(tile_type: (u8, u8)) -> u32 {
     match tile_type {
         (1, 1) => 20,  // Conveyor - 1 minute
@@ -71,7 +67,6 @@ pub fn get_tile_core_interval(tile_type: (u8, u8)) -> u32 {
     }
 }
 
-/// Create a new tile instance based on type, position, and direction
 pub fn get_new_tile(
     tile_type: (u8, u8),
     position: Position,
@@ -227,7 +222,6 @@ pub fn get_new_tile(
     }
 }
 
-/// Rotate a direction 90 degrees clockwise
 pub fn rotate_direction_clockwise(dir: Direction) -> Direction {
     match dir {
         Direction::Up => Direction::Right,
@@ -237,7 +231,6 @@ pub fn rotate_direction_clockwise(dir: Direction) -> Direction {
     }
 }
 
-/// Rotate a direction 90 degrees counterclockwise
 pub fn rotate_direction_counterclockwise(dir: Direction) -> Direction {
     match dir {
         Direction::Up => Direction::Left,
@@ -247,7 +240,6 @@ pub fn rotate_direction_counterclockwise(dir: Direction) -> Direction {
     }
 }
 
-/// Check if a tile at a given position is a conveyor pointing to a specific direction
 pub fn is_conveyor_pointing_to(
     world: &WorldRes,
     from_pos: Position,
@@ -274,7 +266,6 @@ pub fn is_conveyor_pointing_to(
     false
 }
 
-/// Determine the appropriate conveyor texture based on its surroundings
 pub fn determine_conveyor_texture(world: &WorldRes, conveyor: &Conveyor) -> &'static str {
     let pos = conveyor.position;
     let dir = conveyor.direction;
@@ -319,7 +310,6 @@ pub fn determine_conveyor_texture(world: &WorldRes, conveyor: &Conveyor) -> &'st
     }
 }
 
-/// Check if a tile can accept a specific item
 pub fn can_tile_accept_item(tile: &(Box<dyn Tile>, (u8, u8)), item: Item) -> bool {
     if let Some(conveyor) = tile.0.as_any().downcast_ref::<Conveyor>() {
         conveyor.item.is_none()
@@ -337,7 +327,6 @@ pub fn can_tile_accept_item(tile: &(Box<dyn Tile>, (u8, u8)), item: Item) -> boo
     }
 }
 
-/// Get the destination position for a production action
 pub fn get_produce_destination(pos: Position, world: &WorldRes) -> Option<(Position, Position)> {
     if let Some((tile, _)) = world.tiles.get(&pos) {
         let mut end_position = pos;
@@ -363,7 +352,6 @@ pub fn get_produce_destination(pos: Position, world: &WorldRes) -> Option<(Posit
     None
 }
 
-/// Sort a list of actions in topological order to ensure proper execution
 pub fn sort_moves_topologically(actions: Vec<Action>, world: &WorldRes) -> Vec<Action> {
     let mut position_to_output_action: HashMap<Position, Vec<usize>> = HashMap::new();
     let mut position_to_input_action: HashMap<Position, Vec<usize>> = HashMap::new();

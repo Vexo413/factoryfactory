@@ -4,7 +4,6 @@ pub mod tiles;
 pub mod ui;
 pub mod world;
 
-// Re-export systems for convenience
 pub use camera::*;
 pub use items::*;
 pub use tiles::*;

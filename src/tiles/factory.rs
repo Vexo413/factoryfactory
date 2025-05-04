@@ -85,7 +85,6 @@ impl Tile for Factory {
     }
 }
 
-/// Types of factories for processing different resources
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Encode, Decode)]
 pub enum FactoryType {
     RigtoriumSmelter,

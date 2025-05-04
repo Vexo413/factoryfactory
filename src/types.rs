@@ -4,7 +4,6 @@ use std::collections::HashMap;
 
 use crate::router::RouterOutputIndex;
 
-/// Position in the grid world
 #[derive(
     Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash, Serialize, Deserialize, Encode, Decode,
 )]
@@ -40,7 +39,6 @@ impl Position {
     }
 }
 
-/// Direction in the grid world
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Encode, Decode, PartialEq, Eq)]
 pub enum Direction {
     Up,
@@ -70,7 +68,6 @@ impl Direction {
     }
 }
 
-/// Types of items that can be transported and processed
 #[derive(PartialEq, Eq, Clone, Hash, Debug, Copy, Deserialize, Serialize, Encode, Decode)]
 pub enum Item {
     RawFlextorium,
@@ -106,14 +103,12 @@ impl Item {
     }
 }
 
-/// Recipe for crafting items
 #[derive(Debug, Clone)]
 pub struct Recipe {
     pub inputs: HashMap<Item, u32>,
     pub output: Item,
 }
 
-/// Actions that can be performed by tiles
 #[derive(Debug, Clone)]
 pub enum Action {
     Move(Position, Position, Item),
@@ -123,7 +118,6 @@ pub enum Action {
     IncreaseTicks(Position),
 }
 
-/// Types of terrain tiles
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Encode, Decode)]
 pub enum TerrainTileType {
     RawFlextoriumDeposit,

@@ -1,4 +1,3 @@
-// Module declarations
 pub mod base;
 pub mod conveyor;
 pub mod core;
@@ -9,7 +8,6 @@ pub mod portal;
 pub mod router;
 pub mod storage;
 
-// Re-export all types from submodules
 pub use base::Tile;
 pub use conveyor::Conveyor;
 pub use core::Core;
