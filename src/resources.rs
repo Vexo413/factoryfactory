@@ -69,6 +69,7 @@ pub struct WorldRes {
     pub tick_timer: Timer,
     pub tick_count: i32,
     pub actions: Vec<Action>,
+    pub money: u32,
 }
 
 #[derive(Serialize, Deserialize, Encode, Decode)]
@@ -130,6 +131,7 @@ pub struct SerializableWorld {
     pub world_seed: u32,
     pub tick_count: i32,
     pub hotkey_mappings: HashMap<u8, (u8, u8)>,
+    pub money: u32,
 }
 
 impl WorldRes {
@@ -202,6 +204,7 @@ impl WorldRes {
             world_seed: self.world_seed,
             tick_count: self.tick_count,
             hotkey_mappings: hotkeys.mappings.clone(),
+            money: self.money,
         };
 
         let config = config::standard().with_fixed_int_encoding().with_no_limit();
@@ -378,6 +381,7 @@ impl WorldRes {
             tick_timer: Timer::from_seconds(TICK_LENGTH, TimerMode::Repeating),
             tick_count: serializable_world.tick_count,
             actions: Vec::new(),
+            money: serializable_world.money,
         };
 
         Ok((world_res, serializable_world.hotkey_mappings))

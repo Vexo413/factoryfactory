@@ -37,10 +37,15 @@ pub struct InventoryItem {
 }
 
 #[derive(Component)]
-pub struct ContextMenu;
+pub struct InventoryContextMenu;
 
 #[derive(Component)]
 pub struct HotkeyOption {
+    pub tile_type: (u8, u8),
+}
+
+#[derive(Component)]
+pub struct SellOption {
     pub tile_type: (u8, u8),
 }
 
@@ -51,7 +56,7 @@ pub struct HotkeyButton {
 }
 
 #[derive(Component)]
-pub struct CoreContextMenu {
+pub struct CoreMenu {
     pub position: Position,
     pub selected_category: u8,
 }
@@ -65,6 +70,17 @@ pub struct CoreCategory {
 pub struct CoreItemsPanel;
 
 #[derive(Component)]
-pub struct TileTypeOption {
+pub struct CoreMenuItem {
     pub tile_type: (u8, u8),
 }
+
+#[derive(Component)]
+pub struct CoreContextMenu;
+
+#[derive(Component)]
+pub struct BuyOption {
+    pub tile_type: (u8, u8),
+}
+
+#[derive(Component)]
+pub struct MoneyWidget;

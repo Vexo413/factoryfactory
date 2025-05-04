@@ -5,11 +5,12 @@ pub fn spawn_inventory(
     mut commands: Commands,
     keyboard_input: Res<ButtonInput<KeyCode>>,
     inventory_query: Query<(Entity, &Inventory)>,
+    core_menu_query: Query<(), With<CoreMenu>>,
     asset_server: Res<AssetServer>,
     world: Res<WorldRes>,
     placer: Res<Placer>,
 ) {
-    if keyboard_input.just_pressed(KeyCode::KeyE) {
+    if keyboard_input.just_pressed(KeyCode::KeyE) && core_menu_query.is_empty() {
         if let Ok((entity, _)) = inventory_query.single() {
             commands.entity(entity).despawn();
         } else {
@@ -294,32 +295,11 @@ pub fn handle_inventory_interaction(
     mut inventory_query: Query<(Entity, &mut Inventory)>,
     mut placer: ResMut<Placer>,
     mouse_button_input: Res<ButtonInput<MouseButton>>,
-    context_menu_query: Query<Entity, With<ContextMenu>>,
+    context_menu_query: Query<Entity, With<InventoryContextMenu>>,
     mut bg_color_query: Query<(&mut BackgroundColor, &InventoryItem)>,
     item_panel_query: Query<Entity, With<InventoryItemsPanel>>,
     existing_items_query: Query<Entity, With<InventoryItem>>,
 ) {
-    if mouse_button_input.just_pressed(MouseButton::Left)
-        || mouse_button_input.just_pressed(MouseButton::Right)
-    {
-        let mut close_menu = false;
-
-        if mouse_button_input.just_pressed(MouseButton::Right) {
-            for (interaction, _) in item_query.iter() {
-                if matches!(interaction, Interaction::Hovered) {
-                    close_menu = false;
-                    break;
-                }
-            }
-        }
-
-        if close_menu {
-            for entity in context_menu_query.iter() {
-                commands.entity(entity).despawn();
-            }
-        }
-    }
-
     for (interaction, category) in category_query.iter() {
         if matches!(interaction, Interaction::Pressed) {
             if let Ok((_, mut inventory)) = inventory_query.single_mut() {
@@ -427,33 +407,60 @@ pub fn handle_inventory_interaction(
                     },
                     BackgroundColor(Color::srgb(0.2, 0.2, 0.2)),
                     BorderRadius::all(Val::Px(5.0)),
-                    ContextMenu,
+                    InventoryContextMenu,
                     ZIndex(100),
-                    children![(
-                        Node {
-                            width: Val::Percent(100.0),
-                            height: Val::Px(30.0),
-                            display: Display::Flex,
-                            align_items: AlignItems::Center,
-                            justify_content: JustifyContent::Center,
-                            margin: UiRect::bottom(Val::Px(5.0)),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgb(0.25, 0.25, 0.25)),
-                        BorderRadius::all(Val::Px(3.0)),
-                        HotkeyOption {
-                            tile_type: item.tile_type,
-                        },
-                        Interaction::default(),
-                        children![(
-                            Text::new("Assign Hotkey"),
-                            TextFont {
-                                font_size: 16.0,
-                                ..Default::default()
+                    children![
+                        (
+                            Node {
+                                width: Val::Percent(100.0),
+                                height: Val::Px(30.0),
+                                display: Display::Flex,
+                                align_items: AlignItems::Center,
+                                justify_content: JustifyContent::Center,
+                                margin: UiRect::bottom(Val::Px(5.0)),
+                                ..default()
                             },
-                            TextColor(Color::WHITE),
-                        )]
-                    ),],
+                            BackgroundColor(Color::srgb(0.25, 0.25, 0.25)),
+                            BorderRadius::all(Val::Px(3.0)),
+                            HotkeyOption {
+                                tile_type: item.tile_type,
+                            },
+                            Interaction::default(),
+                            children![(
+                                Text::new("Assign Hotkey"),
+                                TextFont {
+                                    font_size: 16.0,
+                                    ..Default::default()
+                                },
+                                TextColor(Color::WHITE),
+                            )]
+                        ),
+                        (
+                            Node {
+                                width: Val::Percent(100.0),
+                                height: Val::Px(30.0),
+                                display: Display::Flex,
+                                align_items: AlignItems::Center,
+                                justify_content: JustifyContent::Center,
+                                margin: UiRect::bottom(Val::Px(5.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgb(0.25, 0.25, 0.25)),
+                            BorderRadius::all(Val::Px(3.0)),
+                            SellOption {
+                                tile_type: item.tile_type,
+                            },
+                            Interaction::default(),
+                            children![(
+                                Text::new(format!("Sell (${})", get_tile_price(item.tile_type))),
+                                TextFont {
+                                    font_size: 16.0,
+                                    ..Default::default()
+                                },
+                                TextColor(Color::WHITE),
+                            )]
+                        )
+                    ],
                 ));
 
                 break;

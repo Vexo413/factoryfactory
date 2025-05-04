@@ -1,18 +1,19 @@
-use crate::{components::*, resources::*};
+use crate::{components::*, get_tile_price, resources::*};
 use bevy::prelude::*;
 
-pub fn handle_context_menu(
+pub fn handle_inventory_context_menu(
     mut commands: Commands,
-    interaction_query: Query<
-        (&Interaction, &HotkeyOption),
-        (Changed<Interaction>, With<HotkeyOption>),
-    >,
-    context_menu_query: Query<Entity, With<ContextMenu>>,
+    hotkey_interaction_query: Query<(&Interaction, &HotkeyOption), Changed<Interaction>>,
+    hotkey_button_interaction_query: Query<(), (Changed<Interaction>, With<HotkeyButton>)>,
+    sell_interaction_query: Query<(&Interaction, &SellOption), Changed<Interaction>>,
+    context_menu_query: Query<Entity, With<InventoryContextMenu>>,
+    mut world: ResMut<WorldRes>,
+    mouse_input: Res<ButtonInput<MouseButton>>,
 ) {
-    for (interaction, hotkey_option) in interaction_query.iter() {
+    for (interaction, hotkey_option) in hotkey_interaction_query.iter() {
         if matches!(interaction, Interaction::Pressed) {
-            if let Some(menu_entity) = context_menu_query.iter().next() {
-                commands.entity(menu_entity).despawn();
+            if let Ok(entity) = context_menu_query.single() {
+                commands.entity(entity).despawn();
 
                 let new_menu = commands
                     .spawn((
@@ -29,7 +30,7 @@ pub fn handle_context_menu(
                         },
                         BackgroundColor(Color::srgb(0.2, 0.2, 0.2)),
                         BorderRadius::all(Val::Px(5.0)),
-                        ContextMenu,
+                        InventoryContextMenu,
                         ZIndex(100),
                     ))
                     .id();
@@ -69,7 +70,6 @@ pub fn handle_context_menu(
                         .with_children(|row| {
                             for i in 0..5 {
                                 row.spawn((
-                                    Button,
                                     Node {
                                         width: Val::Px(25.0),
                                         height: Val::Px(25.0),
@@ -112,7 +112,6 @@ pub fn handle_context_menu(
                         .with_children(|row| {
                             for i in 5..10 {
                                 row.spawn((
-                                    Button,
                                     Node {
                                         width: Val::Px(25.0),
                                         height: Val::Px(25.0),
@@ -145,12 +144,35 @@ pub fn handle_context_menu(
             }
         }
     }
+    for (interaction, sell_option) in sell_interaction_query.iter() {
+        if matches!(interaction, Interaction::Pressed) {
+            if let Ok(entity) = context_menu_query.single() {
+                if world.resources.get(&sell_option.tile_type) >= Some(&1) {
+                    world.money += get_tile_price(sell_option.tile_type);
+                    *world
+                        .resources
+                        .entry(sell_option.tile_type)
+                        .or_insert(0_u32) -= 1;
+                    commands.entity(entity).despawn();
+                }
+            }
+        }
+    }
+    if mouse_input.just_pressed(MouseButton::Left)
+        && hotkey_interaction_query.is_empty()
+        && sell_interaction_query.is_empty()
+        && hotkey_button_interaction_query.is_empty()
+    {
+        if let Ok(entity) = context_menu_query.single() {
+            commands.entity(entity).despawn();
+        }
+    }
 }
 
 pub fn handle_hotkey_assignment(
     mut commands: Commands,
     interaction_query: Query<(&Interaction, &HotkeyButton), Changed<Interaction>>,
-    context_menu_query: Query<Entity, With<ContextMenu>>,
+    context_menu_query: Query<Entity, With<InventoryContextMenu>>,
     mut hotkeys: ResMut<Hotkeys>,
 ) {
     for (interaction, hotkey_button) in interaction_query.iter() {

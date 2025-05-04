@@ -1,4 +1,4 @@
-use crate::{CAMERA_SPEED, CoreContextMenu, Inventory, Placer};
+use crate::{CAMERA_SPEED, CoreMenu, Inventory, Placer};
 use bevy::prelude::*;
 
 pub fn move_camera(
@@ -6,7 +6,7 @@ pub fn move_camera(
     placer: Res<Placer>,
     keyboard_input: Res<ButtonInput<KeyCode>>,
     inventory_query: Query<(), With<Inventory>>,
-    core_menu_query: Query<(), With<CoreContextMenu>>,
+    core_menu_query: Query<(), With<CoreMenu>>,
 ) {
     if inventory_query.is_empty() && core_menu_query.is_empty() {
         let mut direction = Vec2::ZERO;

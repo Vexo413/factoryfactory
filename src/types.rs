@@ -96,8 +96,8 @@ impl Item {
 
     pub fn to_tile(&self) -> Option<(u8, u8)> {
         match self {
-            Item::Conveyor => Some((1, 1)),
-            Item::Router => Some((1, 2)),
+            Item::Conveyor => Some((2, 1)),
+            Item::Router => Some((2, 2)),
             _ => None,
         }
     }

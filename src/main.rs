@@ -53,15 +53,16 @@ fn main() {
                     .chain(),
                 (systems::manage_tiles, systems::move_camera).chain(),
                 (
-                    systems::update_inventory,
-                    systems::handle_inventory_interaction,
                     systems::exit_menu,
                     systems::spawn_inventory,
-                    systems::handle_context_menu,
+                    systems::update_inventory,
+                    systems::handle_inventory_interaction,
+                    systems::handle_inventory_context_menu,
                     systems::handle_hotkey_assignment,
+                    systems::update_core_menu,
+                    systems::handle_core_menu_interaction,
                     systems::handle_core_context_menu,
-                    systems::update_core_menu_ui,
-                    systems::update_core_progress_text,
+                    systems::update_money_widget,
                 )
                     .chain(),
             ),
@@ -108,6 +109,7 @@ fn setup_resources(mut commands: Commands) {
                 tick_timer: Timer::from_seconds(TICK_LENGTH, TimerMode::Repeating),
                 tick_count: 0,
                 actions: Vec::new(),
+                money: 30,
             });
             commands.insert_resource(Hotkeys::default());
         }
@@ -116,6 +118,30 @@ fn setup_resources(mut commands: Commands) {
 
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>, world: Res<WorldRes>) {
     commands.spawn(Camera2d);
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(5.0),
+            top: Val::Px(5.0),
+            min_width: Val::Vw(10.0),
+            height: Val::Vh(5.0),
+            display: Display::Grid,
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+            ..default()
+        },
+        BorderRadius::all(Val::Px(10.0)),
+        BackgroundColor(Color::srgb(0.18, 0.2, 0.23)),
+        children![(
+            Text::new(""),
+            TextFont {
+                font_size: 16.0,
+                ..Default::default()
+            },
+            TextColor(Color::WHITE),
+            MoneyWidget,
+        )],
+    ));
 
     for (pos, _) in world.tiles.iter() {
         commands

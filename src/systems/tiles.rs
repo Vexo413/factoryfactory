@@ -18,10 +18,10 @@ pub fn manage_tiles(
     asset_server: Res<AssetServer>,
     mut commands: Commands,
     hotkeys: Res<Hotkeys>,
-    core_context_query: Query<&CoreContextMenu>,
+    core_menu_query: Query<(), With<CoreMenu>>,
     inventory_query: Query<Entity, With<Inventory>>,
 ) {
-    if inventory_query.is_empty() && core_context_query.is_empty() {
+    if inventory_query.is_empty() && core_menu_query.is_empty() {
         if keyboard_input.just_pressed(KeyCode::Digit0) {
             if let Some(&tile_type) = hotkeys.mappings.get(&0) {
                 placer.tile_type = tile_type;
@@ -66,8 +66,7 @@ pub fn manage_tiles(
     }
 
     for event in mouse_wheel_events.read() {
-        if placer.tile_type == (0, 1) && inventory_query.is_empty() && core_context_query.is_empty()
-        {
+        if placer.tile_type == (0, 1) && inventory_query.is_empty() && core_menu_query.is_empty() {
             let zoom_delta = event.y * ZOOM_SPEED;
             placer.zoom_level = (placer.zoom_level + zoom_delta).clamp(MIN_ZOOM, MAX_ZOOM);
 
@@ -98,7 +97,7 @@ pub fn manage_tiles(
             if let Some(preview_entity) = placer.preview_entity {
                 commands.entity(preview_entity).despawn();
             }
-            if inventory_query.is_empty() && core_context_query.is_empty() {
+            if inventory_query.is_empty() && core_menu_query.is_empty() {
                 let window_size = Vec2::new(window.width(), window.height());
 
                 let mut ndc = (screen_pos / window_size) * 2.0 - Vec2::ONE;
@@ -147,7 +146,7 @@ pub fn manage_tiles(
 
     if mouse_button_input.pressed(MouseButton::Left)
         && inventory_query.is_empty()
-        && core_context_query.is_empty()
+        && core_menu_query.is_empty()
     {
         if let Ok(window) = windows.single() {
             if let Some(screen_pos) = window.cursor_position() {
@@ -250,7 +249,7 @@ pub fn manage_tiles(
                             }
                         }
                     } else {
-                        if core_context_query.is_empty() {
+                        if core_menu_query.is_empty() {
                             if let Some(tile) = world.tiles.get(&pos) {
                                 if let Some(core) = tile.0.as_any().downcast_ref::<Core>() {
                                     commands.spawn((
@@ -267,7 +266,7 @@ pub fn manage_tiles(
                                         },
                                         BackgroundColor(Color::srgb(0.18, 0.2, 0.23)),
                                         BorderRadius::all(Val::Px(10.0)),
-                                        CoreContextMenu {
+                                        CoreMenu {
                                             position: pos,
                                             selected_category: 1,
                                         },
@@ -575,7 +574,7 @@ pub fn manage_tiles(
     }
     if mouse_button_input.pressed(MouseButton::Right)
         && inventory_query.is_empty()
-        && core_context_query.is_empty()
+        && core_menu_query.is_empty()
     {
         placer.tile_type = (0, 1);
         if let Ok(window) = windows.single() {
