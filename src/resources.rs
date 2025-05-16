@@ -148,13 +148,7 @@ impl WorldRes {
                                 direction: conveyor.direction,
                                 item: conveyor.item,
                             }
-                        } else if let Some(router) = tile.as_any().downcast_ref::<Router>() {
-                            SerializableTile::Router {
-                                position: router.position,
-                                direction: router.direction,
-                                item: router.item,
-                                last_output: router.last_output,
-                            }
+
                         } else if let Some(extractor) = tile.as_any().downcast_ref::<Extractor>() {
                             SerializableTile::Extractor {
                                 position: extractor.position,
@@ -189,6 +183,13 @@ impl WorldRes {
                                 interval: core.interval,
                                 ticks: core.ticks,
                                 tile_id: core.tile_id,
+                            }
+                        } else if let Some(router) = tile.as_any().downcast_ref::<Router>() {
+                            SerializableTile::Router {
+                                position: router.position,
+                                direction: router.direction,
+                                item: router.item,
+                                last_output: router.last_output,
                             }
                         } else {
                             SerializableTile::Conveyor {
@@ -249,17 +250,7 @@ impl WorldRes {
                     direction,
                     item,
                 }),
-                SerializableTile::Router {
-                    position,
-                    direction,
-                    item,
-                    last_output,
-                } => Box::new(Router {
-                    position,
-                    direction,
-                    item,
-                    last_output,
-                }),
+
                 SerializableTile::Extractor {
                     position,
                     direction,
@@ -300,6 +291,17 @@ impl WorldRes {
                     inventory,
                 }),
                 SerializableTile::Portal { position, item } => Box::new(Portal { position, item }),
+                SerializableTile::Router {
+                    position,
+                    direction,
+                    item,
+                    last_output,
+                } => Box::new(Router {
+                    position,
+                    direction,
+                    item,
+                    last_output,
+                }),
                 SerializableTile::Junction {
                     position,
                     horizontal_item,

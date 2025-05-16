@@ -109,7 +109,7 @@ fn setup_resources(mut commands: Commands) {
                 tick_timer: Timer::from_seconds(TICK_LENGTH, TimerMode::Repeating),
                 tick_count: 0,
                 actions: Vec::new(),
-                money: 30,
+                money: 100,
             });
             commands.insert_resource(Hotkeys::default());
         }
