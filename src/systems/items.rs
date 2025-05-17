@@ -44,8 +44,6 @@ pub fn spawn_animations(
                 }
             }
         }
-        println!("Initial empty_positions: {:?}", empty_positions);
-        println!("Initial filled_positions: {:?}", filled_positions);
 
         for action in &world.actions {
             match action {
@@ -69,10 +67,7 @@ pub fn spawn_animations(
                                     end.y as f32 * TILE_SIZE,
                                     1.0,
                                 );
-                                println!(
-                                    "Spawning animation for item {:?} from {:?} to {:?}",
-                                    item, start, end
-                                );
+
                                 commands.spawn((
                                     ItemAnimation {
                                         start_pos,
@@ -223,11 +218,6 @@ pub fn spawn_animations(
                                     },
                                 ));
                             }
-                        } else {
-                            println!(
-                                "Skipping animation for item {:?} from {:?} to {:?} due to conditions",
-                                item, start, end
-                            );
                         }
                     }
                 }
